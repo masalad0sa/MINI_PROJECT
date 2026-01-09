@@ -1,6 +1,4 @@
 # MINI_PROJECT
 Mini Project SEM-6
- IDEAS:
- 1. 25017: Digital Platform for Centralized Alumni Data Management and Engagement
- 2. 25103: ERP-based Integrated Student Management system
- 3. 25032: Development of a Smart Digital Platform to Promote Eco & Cultural Tourism in Jharkhand
+ We have decided to create a project on online exam proctoring web system.
+ The project is to provide system for universities and schools to take online exam and detect cheating behaviour during exam using CV and ML.
