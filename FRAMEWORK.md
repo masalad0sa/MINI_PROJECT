@@ -172,7 +172,8 @@ Phase 5 — Reporting
 - Phone audio cheating detection
 - Native mobile app support
 - Cloud scaling enhancements
-- LMS integration (Moodle, Canvas, Google Classroom)
+- LMS integration (Moodle, Canvas, Google Classroom)\
+
 
 ---
 
