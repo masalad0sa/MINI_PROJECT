@@ -79,11 +79,10 @@ export function AppRouter() {
         <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
             <Route path="/dashboard" element={<StudentDashboard />} />
-            <Route path="/upcoming-exams" element={<UpcomingExams />} />
+            <Route path="/available-exams" element={<UpcomingExams />} />
             <Route path="/exam-history" element={<ExamHistory />} />
             <Route path="/pre-exam-check" element={<SystemCheck />} />
             <Route path="/exam/:examId/check" element={<PreExamCheck />} />
-            <Route path="/exam/:examId" element={<ActiveExam />} />
 
             {/* Examiner/Admin routes */}
             <Route element={<ExaminerRoute />}>
@@ -98,6 +97,9 @@ export function AppRouter() {
               <Route path="/admin/users" element={<UserManagement />} />
             </Route>
           </Route>
+
+          {/* Active Exam - No Layout */}
+          <Route path="/exam/:examId" element={<ActiveExam />} />
         </Route>
 
         {/* 404 fallback */}

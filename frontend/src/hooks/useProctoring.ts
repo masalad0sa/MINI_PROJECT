@@ -47,9 +47,9 @@ export const useProctoring = (
   });
 
   const requestRef = useRef<number>();
-  const lastProcessTime = useRef<number>(0);
   const debugCanvasRef = useRef<HTMLCanvasElement>(document.createElement('canvas'));
   const proctoringActive = useRef(true);
+  const lastProcessTime = useRef<number>(0);
 
   // Function to capture frame and send to backend
   const processFrame = useCallback(async () => {
@@ -59,14 +59,14 @@ export const useProctoring = (
     }
 
     const now = Date.now();
-    // PROCESS EVERY 200ms (5 FPS) to reduce lag/network load
-    if (now - lastProcessTime.current < 200) {
+    // PROCESS EVERY 1000ms (1 Second) as requested
+    if (now - lastProcessTime.current < 1000) {
         requestRef.current = requestAnimationFrame(processFrame);
         return;
     }
 
     if (!videoRef.current) {
-        console.log("[Proctoring] Loop skipping: Video ref is null"); 
+        // console.log("[Proctoring] Loop skipping: Video ref is null"); 
         requestRef.current = requestAnimationFrame(processFrame);
         return;
     }
@@ -77,20 +77,20 @@ export const useProctoring = (
         return;
     }
     
-    console.log("[Proctoring] Video ready! Capturing frame...");
+    // console.log("[Proctoring] Video ready! Capturing frame...");
 
     try {
         const video = videoRef.current;
         const canvas = document.createElement('canvas');
-        canvas.width = 640; // Resize for speed
-        canvas.height = 480;
+        canvas.width = 320; // Reduced from 640 to 320 for bandwidth
+        canvas.height = 240; // Reduced from 480 to 240
         const ctx = canvas.getContext('2d');
         if (ctx) {
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
             const imageData = canvas.toDataURL('image/jpeg', 0.7); // Compress
 
             // Send to Node.js Backend (which proxies to Python)
-            const response = await fetch(`${apiBase}/exam/1/frame`, {
+            const response = await fetch(`${apiBase}/proctoring/1/frame`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ image: imageData })
@@ -111,30 +111,27 @@ export const useProctoring = (
                 
                 // Update Debug Canvas with annotated image from backend
                 if (data.processed_image) {
-                    const img = new Image();
-                    img.onload = () => {
-                        const debugCtx = debugCanvasRef.current.getContext('2d');
-                        if (debugCtx) {
-                            debugCanvasRef.current.width = img.width;
-                            debugCanvasRef.current.height = img.height;
-                            debugCtx.drawImage(img, 0, 0);
-                            
-                            // Trigger re-render to show updated canvas
-                            setState(prev => ({ ...prev, debugCanvas: debugCanvasRef.current }));
-                        }
-                    };
-                    img.src = data.processed_image;
+                     // ... same canvas code ...
+                     const img = new Image();
+                     img.onload = () => {
+                         const debugCtx = debugCanvasRef.current.getContext('2d');
+                         if (debugCtx) {
+                             debugCanvasRef.current.width = img.width;
+                             debugCanvasRef.current.height = img.height;
+                             debugCtx.drawImage(img, 0, 0);
+                             setState(prev => ({ ...prev, debugCanvas: debugCanvasRef.current }));
+                         }
+                     };
+                     img.src = data.processed_image;
                 }
 
                 // Trigger Violation Callback if needed
                 if (data.risk_level === 'HIGH' && onViolation) {
-                    // console.log("High risk detected by backend");
                     onViolation({
-                        type: "AI_FLAG",
-                        evidence: "Suspicious behavior detected via AI",
+                        type: data.violation_type || "HIGH_SUSPICION", // Use specific type
+                        evidence: "AI Detected: " + (data.violation_type || "Suspicious Behavior"),
                         timestamp: Date.now()
-                    }); // call logic can be added here if we want immediate feedback
-                    // For now, ActiveExam tracks state.riskLevel
+                    });
                 }
             } else {
                 console.warn("Backend error:", response.statusText);
@@ -152,6 +149,7 @@ export const useProctoring = (
 
   useEffect(() => {
     console.log('[Proctoring] Starting backend connection loop...');
+    proctoringActive.current = true; // RESET THIS!
     requestRef.current = requestAnimationFrame(processFrame);
     
     return () => {

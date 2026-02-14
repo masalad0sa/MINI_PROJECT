@@ -46,6 +46,10 @@ behavior_analyzer = BehaviorAnalyzer()
 object_detector = ObjectDetector()
 print("Models Initialized!")
 
+
+def unicode_text(text):
+    return str(text)
+
 class FrameData(BaseModel):
     image: str
 
@@ -107,27 +111,47 @@ async def process_frame(data: FrameData):
                 score = behavior_analyzer.analyze(gaze_dir, head_dir)
                 
         # Risk Calculation
-        if multi_face or score >= 40:
+        violation_type = None
+        
+        # Priority 1: Prohibited Objects (Phone)
+        if phone_detected:
+            score += 100 # Instant fail
             risk_level = "HIGH"
             risk_color = (0, 0, 255)
+            violation_type = "PROHIBITED_OBJECT"
+            
+        # Priority 2: Multiple Faces
+        elif multi_face:
+            score += 100
+            risk_level = "HIGH"
+            risk_color = (0, 0, 255)
+            violation_type = "MULTIPLE_FACES"
+            
+        # Priority 3: No Face Detected (Optional, if face_count == 0)
+        elif face_count == 0:
+             score += 50
+             risk_level = "HIGH" 
+             risk_color = (0, 0, 255)
+             violation_type = "NO_FACE"
+
+        # Priority 4: Behavior Scores (Gaze/Head)
+        elif score >= 40:
+            risk_level = "HIGH"
+            risk_color = (0, 0, 255)
+            violation_type = "HIGH_SUSPICION" # Could be "LOOKING_AWAY" based on components
         elif score >= 15:
              risk_level = "MEDIUM"
              risk_color = (0, 255, 255)
              
-        if multi_face:
-            score += 5
-            
-        if phone_detected:
-            score += 10
-            risk_level = "HIGH"
-            risk_color = (0, 0, 255)
-
         # Draw Overlay Info
         overlay_color = (0, 255, 0)
         cv2.putText(frame, f"Gaze: {gaze_dir}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, overlay_color, 2)
         cv2.putText(frame, f"Head: {head_dir}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, overlay_color, 2)
         cv2.putText(frame, f"Suspicion: {int(score)}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         cv2.putText(frame, f"Risk: {risk_level}", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, risk_color, 2)
+        
+        if violation_type:
+             cv2.putText(frame, unicode_text(violation_type), (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         
         if phone_detected:
              cv2.putText(frame, "PHONE DETECTED", (w - 300, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
@@ -142,6 +166,7 @@ async def process_frame(data: FrameData):
             "objects": detected_objects,
             "suspicion_score": int(score),
             "risk_level": risk_level,
+            "violation_type": violation_type,
             "processed_image": f"data:image/jpeg;base64,{processed_image_b64}"
         }
 

@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { AlertTriangle, ShieldAlert, XCircle } from "lucide-react";
 
 interface WarningModalProps {
@@ -14,31 +13,16 @@ export function WarningModal({
   violationCount,
   onClose,
 }: WarningModalProps) {
-  const [countdown, setCountdown] = useState(5);
+  // Timer removed for testing
 
-  // Reset countdown when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      setCountdown(5);
-    }
-  }, [isOpen]);
+  // Reset countdown removed
 
-  // Countdown timer
-  useEffect(() => {
-    if (!isOpen || countdown <= 0) return;
-
-    const timer = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [isOpen, countdown]);
+  // Countdown timer removed for testing purposes
+  // useEffect(() => {
+  //   if (!isOpen || countdown <= 0) return;
+  //   const timer = setInterval(() => { ... }, 1000);
+  //   return () => clearInterval(timer);
+  // }, [isOpen, countdown]);
 
   if (!isOpen) return null;
 
@@ -131,16 +115,9 @@ export function WarningModal({
         {!isAutoSubmit && (
           <button
             onClick={onClose}
-            disabled={countdown > 0}
-            className={`w-full py-3 rounded-lg font-semibold transition-all ${
-              countdown > 0
-                ? "bg-white/30 text-white/70 cursor-not-allowed"
-                : "bg-white text-slate-800 hover:bg-white/90"
-            }`}
+            className="w-full py-3 rounded-lg font-semibold transition-all bg-white text-slate-800 hover:bg-white/90"
           >
-            {countdown > 0
-              ? `Please wait (${countdown}s)`
-              : "I Understand - Continue Exam"}
+            I Understand - Continue Exam
           </button>
         )}
 

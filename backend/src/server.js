@@ -34,7 +34,7 @@ app.use(express.urlencoded({ extended: true }));
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/student", studentRoutes);
-app.use("/api/exam", proctoringRoutes);
+
 app.use("/api/exam", examRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/proctoring", proctoringRoutes);

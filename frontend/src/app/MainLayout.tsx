@@ -43,7 +43,7 @@ export function MainLayout() {
   const navItems = useMemo(() => {
     const studentItems: NavItem[] = [
       { path: "/dashboard", name: "Dashboard", icon: LayoutDashboard },
-      { path: "/upcoming-exams", name: "Upcoming Exams", icon: CalendarDays },
+      { path: "/available-exams", name: "Available Exams", icon: CalendarDays },
       { path: "/exam-history", name: "Exam History", icon: History },
       { path: "/pre-exam-check", name: "System Check", icon: ClipboardCheck },
     ];

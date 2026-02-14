@@ -1,9 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "../../lib/AuthContext";
 import {
   Camera,
-  Mic,
   User,
   Wifi,
   Monitor,
@@ -12,7 +10,6 @@ import {
   Loader,
   AlertCircle,
   RefreshCw,
-  Volume2,
 } from "lucide-react";
 
 interface CheckItem {
@@ -24,7 +21,6 @@ interface CheckItem {
 }
 
 export function SystemCheck() {
-  const { user } = useAuth();
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -53,25 +49,11 @@ export function SystemCheck() {
       icon: Camera,
     },
     {
-      id: "microphone",
-      label: "Microphone Access",
-      description: "Audio permission required",
-      status: "pending",
-      icon: Mic,
-    },
-    {
       id: "face",
       label: "Face Detection",
       description: "Face must be visible in frame",
       status: "pending",
       icon: User,
-    },
-    {
-      id: "audio",
-      label: "Audio Output",
-      description: "Speakers or headphones connected",
-      status: "pending",
-      icon: Volume2,
     },
   ]);
 
@@ -130,21 +112,6 @@ export function SystemCheck() {
       updateCheck("webcam", "error");
       updateCheck("face", "error");
     }
-
-    // Check 4: Microphone access
-    updateCheck("microphone", "checking");
-    try {
-      const audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioStream.getTracks().forEach((t) => t.stop());
-      updateCheck("microphone", "ok");
-    } catch {
-      updateCheck("microphone", "error");
-    }
-
-    // Check 6: Audio output (simulated - browsers can't reliably detect this)
-    updateCheck("audio", "checking");
-    await new Promise((r) => setTimeout(r, 500));
-    updateCheck("audio", "ok");
 
     setIsRunning(false);
   }, [updateCheck]);

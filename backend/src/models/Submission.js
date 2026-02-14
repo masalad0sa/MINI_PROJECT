@@ -10,6 +10,10 @@ const violationSchema = new mongoose.Schema({
       "RIGHT_CLICK",
       "DEV_TOOLS",
       "KEYBOARD_SHORTCUT",
+      "AI_FLAG",
+      "MULTIPLE_FACES",
+      "PROHIBITED_OBJECT",
+      "HIGH_SUSPICION"
     ],
     required: true,
   },
@@ -19,6 +23,7 @@ const violationSchema = new mongoose.Schema({
     required: true,
   },
   description: String,
+  evidence: String, // Base64 image or text evidence
   timestamp: {
     type: Date,
     default: Date.now,
@@ -47,6 +52,10 @@ const submissionSchema = new mongoose.Schema(
     score: Number,
     totalQuestions: Number,
     correctAnswers: Number,
+    isPass: {
+      type: Boolean,
+      default: false,
+    },
     status: {
       type: String,
       enum: ["started", "in-progress", "submitted", "graded", "auto-submitted"],

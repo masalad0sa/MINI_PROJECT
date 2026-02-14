@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as api from "../../lib/api";
-import { ViolationType, ViolationSeverity } from "../../hooks/useBrowserSecurity";
+import { useBrowserSecurity, ViolationType, ViolationSeverity } from "../../hooks/useBrowserSecurity";
 import { useProctoring, ViolationEvent } from "../../hooks/useProctoring";
 import { WarningModal } from "./WarningModal";
 
@@ -50,7 +50,7 @@ export function ActiveExam() {
   const [violationCount, setViolationCount] = useState(0);
   const [showSecurityWarning, setShowSecurityWarning] = useState(false);
   const [lastViolationType, setLastViolationType] = useState<string>("TAB_SWITCH");
-  const securityEnabled = useRef(false);
+  const [securityEnabled, setSecurityEnabled] = useState(false);
 
   // Start webcam
   useEffect(() => {
@@ -93,11 +93,22 @@ export function ActiveExam() {
         selectedAnswer: selectedIdx !== null ? selectedIdx : undefined,
       }));
 
-      const submitId = sessionId || examId;
+      const submitId = sessionId;
+      console.log("[ActiveExam] Submitting exam...", { submitId, answers: formattedAnswers });
+      if (!submitId) {
+          console.error("[ActiveExam] No session ID found. Cannot submit.");
+          alert("Critical Error: No active exam session. Submission failed.");
+          setSubmitting(false);
+          return;
+      }
       const res = await api.submitExam(submitId, formattedAnswers);
+      console.log("[ActiveExam] Submit response:", res);
+
       if (res?.success) {
         setResults(res.data);
         setShowResults(true);
+        console.log("[ActiveExam] Exam submitted successfully, showing results.");
+        
         // Stop webcam
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((track) => track.stop());
@@ -106,6 +117,9 @@ export function ActiveExam() {
         if (document.fullscreenElement) {
           document.exitFullscreen().catch(() => {});
         }
+      } else {
+          console.error("[ActiveExam] Submission failed:", res);
+          alert("Submission failed: " + res?.message);
       }
     } catch (err) {
       console.error("Failed to submit exam:", err);
@@ -118,6 +132,9 @@ export function ActiveExam() {
     }
   }, [answers, sessionId, examId, submitting, showResults]);
 
+  // Debounce ref to prevent spamming violations
+  const lastViolationTime = useRef<number>(0);
+
   // Handle security violations
   const handleViolation = useCallback(async (violation: {
     type: ViolationType | string;
@@ -127,11 +144,22 @@ export function ActiveExam() {
   }) => {
     if (!sessionId || showResults || hasAutoSubmitted.current) return;
 
+    // Check debounce (5 seconds cooldown - matches WarningModal)
+    // Check debounce (5 seconds cooldown - matches WarningModal)
+    // const now = Date.now();
+    // if (now - lastViolationTime.current < 5000) {
+    //     console.log("[ActiveExam] Violation ignored due to cooldown");
+    //     return;
+    // }
+    const now = Date.now(); // Keep 'now' variable for later usage
+
     // Map AI violation types to known types if possible, or pass string
     const type = violation.type as ViolationType; 
     const severity = violation.severity as ViolationSeverity;
 
     try {
+      // Logic: Show Warning Modal first? For now, we log but with debounce.
+      
       const res = await api.logViolation(
         sessionId,
         type,
@@ -141,12 +169,15 @@ export function ActiveExam() {
       );
 
       if (res?.success) {
+        lastViolationTime.current = now; // Update timestamp only on success
         setViolationCount(res.data.violationCount);
         setLastViolationType(violation.type);
         setShowSecurityWarning(true);
 
         if (res.data.shouldAutoSubmit && !hasAutoSubmitted.current) {
+          console.warn("[ActiveExam] Auto-submitting due to violations...");
           hasAutoSubmitted.current = true;
+          // Wait 3 seconds then submit
           setTimeout(() => handleSubmit(), 3000);
         }
       }
@@ -159,24 +190,33 @@ export function ActiveExam() {
   const handleAIViolation = useCallback((event: ViolationEvent) => {
       let severity: ViolationSeverity = "MEDIUM";
       let description = "Suspicious behavior detected";
+      let type = "AI_FLAG";
 
       switch(event.type) {
           case "MULTIPLE_FACES":
               severity = "CRITICAL";
               description = "Multiple faces detected";
+              type = "MULTIPLE_FACES";
               break;
           case "PROHIBITED_OBJECT":
               severity = "CRITICAL";
               description = "Prohibited object detected (Phone/Book)";
+              type = "PROHIBITED_OBJECT";
+              break;
+          case "NO_FACE":
+              severity = "CRITICAL";
+              description = "No face detected";
+              type = "NO_FACE";
               break;
           case "HIGH_SUSPICION":
-              description = "High suspicion score detected";
+              description = "High suspicion score (looking away)";
               severity = "CRITICAL";
+              type = "HIGH_SUSPICION";
               break;
       }
 
       handleViolation({
-          type: "AI_FLAG", // valid string for now, backend needs to accept it or map it
+          type, 
           severity,
           description,
           evidence: event.evidence
@@ -208,55 +248,44 @@ export function ActiveExam() {
           const qCount = startRes.data.exam.questions?.length || 0;
           setAnswers(new Array(qCount).fill(null));
           setTimeLeft(startRes.data.exam.duration * 60);
+          setLoading(false);
         } else {
-          console.warn("[Exam] startExam failed, trying getExamById. Reason:", startRes);
-          // If already started, just load exam data
-          const res = await api.getExamById(examId || "");
-          console.log("[Exam] getExamById response:", res); // DEBUG LOG
-          
-          if (res?.success) {
-            setExam(res.data);
-            const qCount = res.data.questions?.length || 0;
-            setAnswers(new Array(qCount).fill(null));
-            setTimeLeft(res.data.duration * 60);
-          } else {
-             console.error("Failed to fetch exam data", res);
-             setExam(null);
-          }
+          console.error("[Exam] startExam failed:", startRes);
+          setExam(null);
+          setLoading(false);
+          // Show error to user
+          alert("Failed to start exam session. Please try again or contact support.");
+          navigate("/dashboard");
         }
       } catch (err) {
         console.error("Failed to load exam:", err);
         setExam(null);
-      } finally {
-        console.log('[Exam] Loading finished. Exam state:', checkExamState());
         setLoading(false);
       }
     }
     
-    // Helper to log state safely
-    const checkExamState = () => ({ hasExam: !!exam, hasSession: !!sessionId });
     if (examId) {
         loadExam();
     }
-  }, [examId]);
+  }, [examId, navigate]);
 
 
-  // Browser security hook - TEMPORARILY DISABLED
-  // useBrowserSecurity({
-  //   enabled: securityEnabled.current && !showResults && !loading,
-  //   onViolation: handleViolation,
-  //   onFullscreenRequest: () => {
-  //     // Will be called when user exits fullscreen - re-request fullscreen
-  //     if (!showResults && !loading && document.fullscreenEnabled) {
-  //       document.documentElement.requestFullscreen().catch(() => {});
-  //     }
-  //   },
-  // });
+  // Browser security hook - ENABLED
+  useBrowserSecurity({
+    enabled: securityEnabled && !showResults && !loading,
+    onViolation: handleViolation,
+    onFullscreenRequest: () => {
+      // Will be called when user exits fullscreen - re-request fullscreen
+      if (!showResults && !loading && document.fullscreenEnabled) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    },
+  });
 
   // Enable security after exam loads
   useEffect(() => {
     if (exam && sessionId && !loading) {
-      securityEnabled.current = true;
+      setSecurityEnabled(true);
     }
   }, [exam, sessionId, loading]);
 
@@ -580,10 +609,8 @@ export function ActiveExam() {
         violationCount={violationCount}
         onClose={() => {
           setShowSecurityWarning(false);
-          if (violationCount >= 3) {
-            // Redirect to dashboard after auto-submit
-            navigate("/dashboard");
-          }
+          // Do not navigate away automatically. 
+          // If auto-submitted, we stay on page to show results (via handleSubmit).
         }}
       />
 

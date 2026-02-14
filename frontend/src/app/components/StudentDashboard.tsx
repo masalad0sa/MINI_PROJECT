@@ -16,7 +16,7 @@ import * as api from "../../lib/api";
 export function StudentDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [exams, setExams] = useState<any[]>([]);
+  const [dashboardData, setDashboardData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -24,24 +24,53 @@ export function StudentDashboard() {
     async function load() {
       try {
         setLoading(true);
-        const res = await api.getExams();
+        // Use getStudentDashboard endpoint instead of just getExams
+        const res = await api.getStudentDashboard(user?.id || ""); 
         if (res?.success) {
-          setExams(res.data || []);
+          console.log("[Dashboard] Loaded data:", res.data);
+          setDashboardData(res.data);
         } else {
-          setError(res?.message || "Failed to load exams");
+          console.error("[Dashboard] Failed:", res?.message);
+          setError(res?.message || "Failed to load dashboard");
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "An error occurred");
+        // Fallback to simpler loading if dashboard fails or user ID missing
+        console.error("Dashboard load failed, finding exams only:", err);
+         const res = await api.getExams();
+         if (res?.success) {
+            setDashboardData({ upcomingExams: res.data, completedExams: [], stats: { completed: 0, averageScore: 0 } });
+         }
       } finally {
         setLoading(false);
       }
     }
-    load();
-  }, []);
+    if (user?.id) load();
+  }, [user]);
 
   const handleStartExam = (examId: string) => {
+    // navigate(`/exam/${examId}/check`); // Old route?
+    // Check if it's a completed exam to show results?
+    // For now, always go to active exam check. 
+    // Ideally we should check if they already took it.
     navigate(`/exam/${examId}/check`);
   };
+
+  const handleViewResults = (examId: string) => {
+      // Create a results page route or modal
+      // For now maybe we don't have a dedicated permalink for results, 
+      // but let's assume /exam/:id/results exists or we reuse the active exam page logic to show results
+      navigate(`/exam/${examId}`); // The ActiveExam component handles showing results if already taken
+  };
+
+  if (loading) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+            <Loader className="w-8 h-8 text-blue-600 animate-spin" />
+        </div>
+      );
+  }
+
+  const { upcomingExams = [], completedExams = [], stats } = dashboardData || {};
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -93,65 +122,66 @@ export function StudentDashboard() {
 
         {/* Cards Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* Static Upcoming Exam Card */}
-          <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200 hover:shadow-xl transition-shadow">
-            <div className="bg-gradient-to-br from-blue-500 to-blue-600 p-4">
+          {/* Stats Card */}
+          <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
+             <div className="bg-gradient-to-br from-blue-500 to-blue-600 p-4">
               <h2 className="text-white font-semibold text-lg flex items-center gap-2">
-                <Calendar className="w-5 h-5" />
-                Instructions
+                <User className="w-5 h-5" />
+                Your Stats
               </h2>
             </div>
             <div className="p-6">
-              <h3 className="text-lg font-bold text-slate-800 mb-4">
-                Before Starting
-              </h3>
-              <div className="space-y-3 mb-6 text-sm text-slate-600">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                  <span>Ensure stable internet connection</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                  <span>Allow webcam and audio access</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                  <span>Find a quiet, well-lit environment</span>
-                </div>
-              </div>
+                 <div className="flex justify-between items-center mb-4">
+                     <span className="text-slate-600">Exams Completed</span>
+                     <span className="text-2xl font-bold">{stats?.completed || 0}</span>
+                 </div>
+                 <div className="flex justify-between items-center">
+                     <span className="text-slate-600">Avg. Score</span>
+                     <span className="text-2xl font-bold text-green-600">{stats?.averageScore || 0}%</span>
+                 </div>
             </div>
           </div>
 
-          {/* Past Results Card */}
+          {/* Past Results Card - NOW DYNAMIC */}
           <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200 hover:shadow-xl transition-shadow">
             <div className="bg-gradient-to-br from-green-500 to-green-600 p-4">
               <h2 className="text-white font-semibold text-lg flex items-center gap-2">
                 <History className="w-5 h-5" />
-                System Status
+                Recent History
               </h2>
             </div>
-            <div className="p-6">
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-slate-600 text-sm">Exams Taken</span>
-                  <span className="text-2xl font-bold text-slate-800">
-                    {exams.length}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg p-3">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span className="text-green-700 text-sm font-medium">
-                    System: Operational
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg p-3">
-                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                  <span className="text-green-700 text-sm font-medium">
-                    Connection: Stable
-                  </span>
-                </div>
-              </div>
+            <div className="p-0">
+              {completedExams.length === 0 ? (
+                  <p className="p-6 text-slate-500 text-sm">No exams completed yet.</p>
+              ) : (
+                  <div className="divide-y divide-slate-100">
+                      {completedExams.slice(0, 3).map((sub: any) => (
+                          <div key={sub._id} className="p-4 hover:bg-slate-50 transition cursor-pointer" onClick={() => handleViewResults(sub.examId?._id || sub.examId)}>
+                              <div className="flex justify-between items-start mb-1">
+                                  <h4 className="font-semibold text-slate-800">{sub.examId?.title || "Untitled Exam"}</h4>
+                                  <span className={`px-2 py-0.5 rounded text-xs font-bold ${sub.score >= (sub.examId?.passingScore || 50) ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                                      {sub.score}%
+                                  </span>
+                              </div>
+                              <div className="flex justify-between items-center text-xs text-slate-500">
+                                  <span>{new Date(sub.submittedAt).toLocaleDateString()}</span>
+                                  <span>{sub.status}</span>
+                              </div>
+                          </div>
+                      ))}
+                  </div>
+              )}
             </div>
+            {completedExams.length > 0 && (
+                 <div className="p-3 bg-slate-50 text-center border-t border-slate-100">
+                     <button 
+                        onClick={() => navigate('/exam-history')}
+                        className="text-blue-600 text-sm font-medium hover:underline"
+                     >
+                        View All History
+                     </button>
+                 </div>
+            )}
           </div>
 
           {/* Dynamic Available Exams */}
@@ -163,17 +193,13 @@ export function StudentDashboard() {
               </h2>
             </div>
             <div className="p-6">
-              {loading ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader className="w-6 h-6 text-blue-600 animate-spin" />
-                </div>
-              ) : exams.length === 0 ? (
+              {upcomingExams.length === 0 ? (
                 <p className="text-slate-600 text-sm">
                   No exams available at this time.
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {exams.slice(0, 3).map((exam) => (
+                  {upcomingExams.slice(0, 3).map((exam: any) => (
                     <button
                       key={exam._id}
                       onClick={() => handleStartExam(exam._id)}
@@ -195,7 +221,7 @@ export function StudentDashboard() {
         </div>
 
         {/* Full Exams List */}
-        {!loading && exams.length > 0 && (
+        {upcomingExams.length > 0 && (
           <div className="mt-8 bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
             <div className="bg-white border-b border-slate-200 p-6">
               <h3 className="text-xl font-bold text-slate-800">
@@ -204,7 +230,7 @@ export function StudentDashboard() {
             </div>
             <div className="p-6">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {exams.map((exam) => (
+                {upcomingExams.map((exam: any) => (
                   <div
                     key={exam._id}
                     className="border border-slate-200 rounded-lg p-6 hover:shadow-lg hover:border-blue-500 transition-all group cursor-pointer"

@@ -196,6 +196,15 @@ export async function getAdminDashboard() {
   return handleResponse(res);
 }
 
+export async function getStudentDashboard(studentId: string) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/student/dashboard/${studentId}`, { headers });
+  return handleResponse(res);
+}
+
 export async function getActiveExamSessions() {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

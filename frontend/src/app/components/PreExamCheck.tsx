@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
   Camera,
-  Mic,
   Wifi,
   User,
   CheckCircle2,
@@ -47,7 +46,6 @@ export function PreExamCheck() {
 
   const checklistItems = [
     { label: "Webcam", status: webcamReady ? "OK" : "Pending", icon: Camera },
-    { label: "Microphone", status: webcamReady ? "OK" : "Pending", icon: Mic },
     { label: "Internet", status: internet ? "OK" : "Failed", icon: Wifi },
   ];
 
@@ -195,9 +193,7 @@ export function PreExamCheck() {
             </li>
             <li className="flex items-start gap-2 text-blue-800">
               <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-2"></div>
-              <span>
-                Only one person should be visible in frame at all times
-              </span>
+              <span>Allow camera permission when prompted</span>
             </li>
             <li className="flex items-start gap-2 text-blue-800">
               <div className="w-1.5 h-1.5 bg-blue-500 rounded-full mt-2"></div>

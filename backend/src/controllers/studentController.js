@@ -12,20 +12,22 @@ export const getStudentDashboard = async (req, res) => {
       isPublished: true,
     }).select("-questions");
 
-    // Fetch student submissions
+      // Fetch student submissions
+    console.log(`[Dashboard] Fetching for student: ${studentId}`);
     const submissions = await Submission.find({ studentId }).populate(
       "examId",
-      "title",
+      "title passingScore",
     );
+    console.log(`[Dashboard] Found ${submissions.length} submissions for ${studentId}`);
 
     // Calculate stats
     const completedCount = submissions.filter(
-      (s) => s.status === "graded",
+      (s) => ["graded", "auto-submitted"].includes(s.status),
     ).length;
     const averageScore =
       completedCount > 0
         ? submissions
-            .filter((s) => s.status === "graded")
+            .filter((s) => ["graded", "auto-submitted"].includes(s.status))
             .reduce((acc, s) => acc + (s.score || 0), 0) / completedCount
         : 0;
 
@@ -35,7 +37,7 @@ export const getStudentDashboard = async (req, res) => {
       data: {
         studentId,
         upcomingExams: exams,
-        completedExams: submissions.filter((s) => s.status === "graded"),
+        completedExams: submissions.filter((s) => ["graded", "auto-submitted"].includes(s.status)),
         stats: {
           completed: completedCount,
           averageScore: Math.round(averageScore),
@@ -53,6 +55,7 @@ export const startExam = async (req, res) => {
   try {
     const { examId } = req.params;
     const studentId = req.user?.id || req.body.studentId;
+    console.log(`[StartExam] Student: ${studentId}, Exam: ${examId}`);
 
     // Get exam
     const exam = await Exam.findById(examId);
@@ -146,13 +149,18 @@ export const submitExam = async (req, res) => {
     submission.answers = gradedAnswers;
     submission.correctAnswers = correctAnswers;
     submission.score = Math.round(score);
+    submission.isPass = passed;
     submission.status = submission.autoSubmitted ? "auto-submitted" : "graded";
     submission.submittedAt = new Date();
     submission.duration = Math.round(
       (Date.now() - submission.startedAt) / 1000,
     );
+    
+    console.log(`[SubmitExam] Saving submission: ${sessionId}`);
+    console.log(`[SubmitExam] Student: ${submission.studentId}, Score: ${submission.score}, Status: ${submission.status}`);
 
     await submission.save();
+    console.log(`[SubmitExam] Submission saved successfully.`);
 
     res.status(200).json({
       success: true,

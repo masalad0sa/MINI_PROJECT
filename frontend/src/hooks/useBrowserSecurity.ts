@@ -135,28 +135,36 @@ export function useBrowserSecurity({
         { key: "F12" }, // Dev tools
         { ctrl: true, key: "u" }, // View source
         { ctrl: true, key: "s" }, // Save
-        { alt: true, key: "Tab" }, // Alt+Tab (may not work in all browsers)
+        { alt: true, key: "Tab" }, // Alt+Tab (may now work in all browsers)
+        { key: "z", ctrl: true }, // Undo
+        { key: "y", ctrl: true }, // Redo
       ];
 
       for (const combo of blockedCombos) {
         const ctrlMatch = combo.ctrl ? e.ctrlKey || e.metaKey : true;
         const shiftMatch = combo.shift ? e.shiftKey : !combo.shift;
         const keyMatch = e.key.toLowerCase() === combo.key?.toLowerCase();
+        const altMatch = combo.alt ? e.altKey : !combo.alt;
 
-        if (ctrlMatch && shiftMatch && keyMatch) {
+        if (ctrlMatch && shiftMatch && keyMatch && altMatch) {
           e.preventDefault();
-          
-          // Determine violation type based on shortcut
-          if (combo.key === "c" || combo.key === "v" || combo.key === "x") {
-            reportViolation("COPY_PASTE", `Attempted keyboard shortcut: Ctrl+${combo.key.toUpperCase()}`);
-          } else if (combo.key === "i" || combo.key === "j" || combo.key === "F12") {
-            reportViolation("DEV_TOOLS", "Attempted to open developer tools");
-          } else {
-            reportViolation("KEYBOARD_SHORTCUT", `Blocked keyboard shortcut detected`);
-          }
+          reportViolation("KEYBOARD_SHORTCUT", `Blocked keyboard shortcut detected`);
           return;
         }
       }
+    };
+
+    // Navigation Blocking
+    const handlePopState = (_e: PopStateEvent) => {
+      // Prevent going back
+      window.history.pushState(null, "", window.location.href);
+      reportViolation("TAB_SWITCH", "Attempted to use Browser Back Button");
+    };
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "Are you sure you want to leave the exam? Your progress may be lost.";
+      return "Are you sure you want to leave the exam? Your progress may be lost.";
     };
 
     // Add event listeners
@@ -167,6 +175,11 @@ export function useBrowserSecurity({
     document.addEventListener("cut", handleCut);
     document.addEventListener("contextmenu", handleContextMenu);
     document.addEventListener("keydown", handleKeyDown);
+    
+    // pushState to lock navigation
+    window.history.pushState(null, "", window.location.href);
+    window.addEventListener("popstate", handlePopState);
+    window.addEventListener("beforeunload", handleBeforeUnload);
 
     // Auto-request fullscreen on mount
     requestFullscreen();
@@ -180,6 +193,8 @@ export function useBrowserSecurity({
       document.removeEventListener("cut", handleCut);
       document.removeEventListener("contextmenu", handleContextMenu);
       document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("popstate", handlePopState);
+      window.removeEventListener("beforeunload", handleBeforeUnload);
     };
   }, [enabled, reportViolation, requestFullscreen, onFullscreenRequest]);
 

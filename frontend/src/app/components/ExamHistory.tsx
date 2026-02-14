@@ -14,6 +14,7 @@ import {
   Shield,
   AlertCircle,
 } from "lucide-react";
+import * as api from "../../lib/api";
 
 interface ViolationRecord {
   type: string;
@@ -38,81 +39,6 @@ interface ExamRecord {
   violations: ViolationRecord[];
 }
 
-// Mock data for demonstration - replace with API call
-const mockExamHistory: ExamRecord[] = [
-  {
-    id: "1",
-    examTitle: "CS101 Midterm Examination",
-    examDate: "2025-10-12T10:00:00Z",
-    score: 85,
-    totalQuestions: 50,
-    passingScore: 50,
-    passed: true,
-    duration: 45,
-    status: "graded",
-    autoSubmitted: false,
-    isSuspicious: false,
-    violationCount: 1,
-    violations: [
-      {
-        type: "TAB_SWITCH",
-        description: "Switched to another tab",
-        severity: "MEDIUM",
-        timestamp: "2025-10-12T10:15:32Z",
-      },
-    ],
-  },
-  {
-    id: "2",
-    examTitle: "Python Programming Basics",
-    examDate: "2025-10-05T14:00:00Z",
-    score: 92,
-    totalQuestions: 40,
-    passingScore: 60,
-    passed: true,
-    duration: 38,
-    status: "graded",
-    autoSubmitted: false,
-    isSuspicious: false,
-    violationCount: 0,
-    violations: [],
-  },
-  {
-    id: "3",
-    examTitle: "Data Structures Quiz",
-    examDate: "2025-09-28T09:00:00Z",
-    score: 45,
-    totalQuestions: 30,
-    passingScore: 50,
-    passed: false,
-    duration: 25,
-    status: "graded",
-    autoSubmitted: true,
-    isSuspicious: true,
-    violationCount: 3,
-    violations: [
-      {
-        type: "FULLSCREEN_EXIT",
-        description: "Exited fullscreen mode",
-        severity: "CRITICAL",
-        timestamp: "2025-09-28T09:10:15Z",
-      },
-      {
-        type: "TAB_SWITCH",
-        description: "Switched to another tab",
-        severity: "MEDIUM",
-        timestamp: "2025-09-28T09:12:45Z",
-      },
-      {
-        type: "TAB_SWITCH",
-        description: "Switched to another tab",
-        severity: "CRITICAL",
-        timestamp: "2025-09-28T09:15:00Z",
-      },
-    ],
-  },
-];
-
 export function ExamHistory() {
   const { user } = useAuth();
   const [examHistory, setExamHistory] = useState<ExamRecord[]>([]);
@@ -120,14 +46,49 @@ export function ExamHistory() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   useEffect(() => {
-    // Simulate API call - replace with actual API
-    setTimeout(() => {
-      setExamHistory(mockExamHistory);
-      setLoading(false);
-    }, 500);
-  }, []);
+    async function fetchHistory() {
+      if (!user?.id) return;
+      try {
+        setLoading(true);
+        const res = await api.getStudentDashboard(user.id);
+        if (res?.success && res.data?.completedExams) {
+           const mappedHistory: ExamRecord[] = res.data.completedExams.map((sub: any) => {
+              const score = sub.score || 0;
+              const passingScore = sub.examId?.passingScore || 50; // Default 50 if missing
+              // Use persisted status if true, otherwise calculate. This handles legacy default=false.
+              const passed = sub.isPass === true || score >= passingScore;
+              
+              return {
+                id: sub._id,
+                examTitle: sub.examId?.title || "Unknown Exam",
+                examDate: sub.submittedAt || sub.createdAt,
+                score: score,
+                totalQuestions: sub.totalQuestions || 0,
+                passingScore: passingScore,
+                passed: passed,
+                duration: sub.duration || 0,
+                status: sub.status,
+                autoSubmitted: sub.autoSubmitted || false,
+                isSuspicious: sub.isSuspicious || false,
+                violationCount: sub.violationCount || 0,
+                violations: sub.violations || []
+             };
+           });
+           // Sort by date descending
+           mappedHistory.sort((a, b) => new Date(b.examDate).getTime() - new Date(a.examDate).getTime());
+           setExamHistory(mappedHistory);
+        }
+      } catch (err) {
+        console.error("Failed to fetch exam history", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchHistory();
+  }, [user]);
 
   const formatDate = (dateStr: string) => {
+    if (!dateStr) return "N/A";
     return new Date(dateStr).toLocaleDateString("en-US", {
       year: "numeric",
       month: "short",
@@ -138,6 +99,7 @@ export function ExamHistory() {
   };
 
   const formatTime = (dateStr: string) => {
+    if (!dateStr) return "N/A";
     return new Date(dateStr).toLocaleTimeString("en-US", {
       hour: "2-digit",
       minute: "2-digit",

@@ -137,7 +137,7 @@ export function UpcomingExams() {
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-slate-800 mb-2 flex items-center gap-3">
             <Calendar className="w-8 h-8 text-blue-600" />
-            Upcoming Exams
+            Available Exams
           </h1>
           <p className="text-slate-600">
             View scheduled exams and their availability windows
