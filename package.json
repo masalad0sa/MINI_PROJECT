@@ -1,0 +1,13 @@
+{
+  "name": "enhance-exam-proctoring",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev:frontend": "npm --workspace frontend run dev",
+    "dev:backend": "npm --workspace backend run dev",
+    "dev": "npm --workspace backend run dev"
+  }
+}
