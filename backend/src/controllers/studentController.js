@@ -75,6 +75,9 @@ export const startExam = async (req, res) => {
     });
     
     if (existingSubmission) {
+      existingSubmission.lastHeartbeatAt = new Date();
+      await existingSubmission.save();
+
       const latestAction = existingSubmission.examinerActions?.length
         ? existingSubmission.examinerActions[existingSubmission.examinerActions.length - 1]
         : null;
@@ -86,6 +89,10 @@ export const startExam = async (req, res) => {
         data: {
           sessionId: existingSubmission._id,
           status: existingSubmission.status,
+          controlState: existingSubmission.controlState || "ACTIVE",
+          pauseStartedAt: existingSubmission.pauseStartedAt || null,
+          totalPausedMs: existingSubmission.totalPausedMs || 0,
+          startedAt: existingSubmission.startedAt,
           autoSubmitted: existingSubmission.autoSubmitted || false,
           violationCount: existingSubmission.violationCount || 0,
           latestAction,
@@ -106,6 +113,9 @@ export const startExam = async (req, res) => {
       studentId,
       totalQuestions: exam.totalQuestions,
       status: "started",
+      controlState: "ACTIVE",
+      totalPausedMs: 0,
+      lastHeartbeatAt: new Date(),
     });
 
     res.status(200).json({
@@ -114,6 +124,10 @@ export const startExam = async (req, res) => {
       data: {
         sessionId: submission._id,
         status: submission.status,
+        controlState: submission.controlState || "ACTIVE",
+        pauseStartedAt: submission.pauseStartedAt || null,
+        totalPausedMs: submission.totalPausedMs || 0,
+        startedAt: submission.startedAt,
         autoSubmitted: submission.autoSubmitted || false,
         violationCount: submission.violationCount || 0,
         latestAction: null,
@@ -168,8 +182,20 @@ export const submitExam = async (req, res) => {
     submission.isPass = passed;
     submission.status = submission.autoSubmitted ? "auto-submitted" : "graded";
     submission.submittedAt = new Date();
-    submission.duration = Math.round(
-      (Date.now() - submission.startedAt) / 1000,
+
+    // Compute effective duration excluding examiner-induced pause windows.
+    const nowMs = Date.now();
+    const startedMs = new Date(submission.startedAt).getTime();
+    let pausedMs = submission.totalPausedMs || 0;
+    if (submission.pauseStartedAt) {
+      pausedMs += Math.max(0, nowMs - new Date(submission.pauseStartedAt).getTime());
+      submission.pauseStartedAt = null;
+    }
+    submission.totalPausedMs = pausedMs;
+    submission.controlState = "TERMINATED";
+    submission.duration = Math.max(
+      0,
+      Math.round((nowMs - startedMs - pausedMs) / 1000),
     );
     
     console.log(`[SubmitExam] Saving submission: ${sessionId}`);
@@ -246,7 +272,7 @@ export const getExamSessionStatus = async (req, res) => {
     const studentId = req.user?.id;
 
     const submission = await Submission.findById(sessionId).select(
-      "studentId examId status violationCount isSuspicious autoSubmitted examinerActions submittedAt updatedAt",
+      "studentId examId status controlState pauseStartedAt totalPausedMs violationCount isSuspicious autoSubmitted examinerActions submittedAt updatedAt startedAt",
     );
 
     if (!submission) {
@@ -265,7 +291,8 @@ export const getExamSessionStatus = async (req, res) => {
         : null;
 
     const latestActionType = latestAction?.actionType || null;
-    const terminatedByExaminer = latestActionType === "TERMINATE";
+    const terminatedByExaminer =
+      latestActionType === "TERMINATE" || submission.controlState === "TERMINATED";
     const shouldStopExam =
       terminatedByExaminer ||
       (submission.autoSubmitted && submission.status === "auto-submitted");
@@ -277,6 +304,10 @@ export const getExamSessionStatus = async (req, res) => {
         sessionId: submission._id,
         examId: submission.examId,
         status: submission.status,
+        controlState: submission.controlState || "ACTIVE",
+        pauseStartedAt: submission.pauseStartedAt || null,
+        totalPausedMs: submission.totalPausedMs || 0,
+        startedAt: submission.startedAt || null,
         violationCount: submission.violationCount || 0,
         isSuspicious: submission.isSuspicious || false,
         autoSubmitted: submission.autoSubmitted || false,
@@ -291,6 +322,51 @@ export const getExamSessionStatus = async (req, res) => {
     res
       .status(500)
       .json({ message: "Failed to fetch session status", error: error.message });
+  }
+};
+
+export const postExamHeartbeat = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const studentId = req.user?.id;
+
+    const submission = await Submission.findById(sessionId).select(
+      "studentId status controlState lastHeartbeatAt updatedAt",
+    );
+
+    if (!submission) {
+      return res.status(404).json({ message: "Submission not found" });
+    }
+
+    if (submission.studentId.toString() !== studentId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const activeStatuses = new Set(["started", "in-progress"]);
+    if (!activeStatuses.has(submission.status)) {
+      return res.status(409).json({
+        message: "Heartbeat not accepted for completed session",
+      });
+    }
+
+    submission.lastHeartbeatAt = new Date();
+    await submission.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Heartbeat received",
+      data: {
+        sessionId: submission._id,
+        status: submission.status,
+        controlState: submission.controlState || "ACTIVE",
+        lastHeartbeatAt: submission.lastHeartbeatAt,
+        serverTime: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to post heartbeat", error: error.message });
   }
 };
 
@@ -309,6 +385,17 @@ export const logViolation = async (req, res) => {
     // Verify the student owns this submission
     if (submission.studentId.toString() !== studentId) {
       return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const activeStatuses = new Set(["started", "in-progress"]);
+    if (!activeStatuses.has(submission.status)) {
+      return res
+        .status(409)
+        .json({ message: "Cannot log violations for a completed session" });
+    }
+
+    if ((submission.controlState || "ACTIVE") === "PAUSED") {
+      return res.status(409).json({ message: "Session is paused by examiner" });
     }
 
     // Add violation to submission

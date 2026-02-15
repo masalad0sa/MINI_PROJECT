@@ -51,9 +51,34 @@ export function ActiveExam() {
   const [showSecurityWarning, setShowSecurityWarning] = useState(false);
   const [lastViolationType, setLastViolationType] = useState<string>("TAB_SWITCH");
   const [securityEnabled, setSecurityEnabled] = useState(false);
+  const [sessionControlState, setSessionControlState] = useState<
+    "ACTIVE" | "PAUSED" | "TERMINATED"
+  >("ACTIVE");
   const [examinerNotice, setExaminerNotice] = useState<string | null>(null);
   const [lockedByExaminer, setLockedByExaminer] = useState(false);
   const lastExaminerActionTimestamp = useRef<string>("");
+
+  const calculateRemainingSeconds = useCallback(
+    (
+      durationMinutes: number,
+      startedAt?: string,
+      totalPausedMs = 0,
+      pauseStartedAt?: string | null,
+      controlState: "ACTIVE" | "PAUSED" | "TERMINATED" = "ACTIVE",
+    ) => {
+      if (!startedAt) return durationMinutes * 60;
+      const startedMs = new Date(startedAt).getTime();
+      const nowMs = Date.now();
+      const activePauseMs =
+        controlState === "PAUSED" && pauseStartedAt
+          ? Math.max(0, nowMs - new Date(pauseStartedAt).getTime())
+          : 0;
+      const elapsedMs = Math.max(0, nowMs - startedMs - (totalPausedMs || 0) - activePauseMs);
+      const remaining = durationMinutes * 60 - Math.floor(elapsedMs / 1000);
+      return Math.max(0, remaining);
+    },
+    [],
+  );
 
   // Start webcam
   useEffect(() => {
@@ -256,7 +281,21 @@ export function ActiveExam() {
           setExam(startRes.data.exam);
           const qCount = startRes.data.exam.questions?.length || 0;
           setAnswers(new Array(qCount).fill(null));
-          setTimeLeft(startRes.data.exam.duration * 60);
+          const initialControlState = (startRes.data.controlState ||
+            "ACTIVE") as "ACTIVE" | "PAUSED" | "TERMINATED";
+          setSessionControlState(initialControlState);
+          setLockedByExaminer(
+            initialControlState === "PAUSED" || initialControlState === "TERMINATED",
+          );
+          setTimeLeft(
+            calculateRemainingSeconds(
+              startRes.data.exam.duration,
+              startRes.data.startedAt,
+              startRes.data.totalPausedMs || 0,
+              startRes.data.pauseStartedAt || null,
+              initialControlState,
+            ),
+          );
           setLoading(false);
         } else {
           console.error("[Exam] startExam failed:", startRes);
@@ -276,12 +315,12 @@ export function ActiveExam() {
     if (examId) {
         loadExam();
     }
-  }, [examId, navigate]);
+  }, [examId, navigate, calculateRemainingSeconds]);
 
 
   // Browser security hook - ENABLED
   useBrowserSecurity({
-    enabled: securityEnabled && !showResults && !loading,
+    enabled: securityEnabled && !showResults && !loading && !lockedByExaminer,
     onViolation: handleViolation,
     onFullscreenRequest: () => {
       // Will be called when user exits fullscreen - re-request fullscreen
@@ -314,6 +353,24 @@ export function ActiveExam() {
           setViolationCount(data.violationCount);
         }
 
+        const controlState = (data.controlState ||
+          "ACTIVE") as "ACTIVE" | "PAUSED" | "TERMINATED";
+        setSessionControlState(controlState);
+        setLockedByExaminer(
+          controlState === "PAUSED" || controlState === "TERMINATED",
+        );
+        if (exam?.duration && data.startedAt) {
+          setTimeLeft(
+            calculateRemainingSeconds(
+              exam.duration,
+              data.startedAt,
+              data.totalPausedMs || 0,
+              data.pauseStartedAt || null,
+              controlState,
+            ),
+          );
+        }
+
         const latestAction = data.latestAction;
         if (
           latestAction?.timestamp &&
@@ -331,15 +388,15 @@ export function ActiveExam() {
               setExaminerNotice(`${actor} sent a message${note}.`);
               break;
             case "PAUSE":
-              setLockedByExaminer(true);
               setExaminerNotice(`Exam paused by ${actor}${note}.`);
               break;
+            case "RESUME":
+              setExaminerNotice(`Exam resumed by ${actor}${note}.`);
+              break;
             case "MARK_FALSE_POSITIVE":
-              setLockedByExaminer(false);
               setExaminerNotice(`Previous flag marked false positive by ${actor}.`);
               break;
             case "TERMINATE":
-              setLockedByExaminer(true);
               setExaminerNotice(`Exam terminated by ${actor}${note}. Submitting...`);
               if (!hasAutoSubmitted.current && !showResults) {
                 hasAutoSubmitted.current = true;
@@ -353,6 +410,7 @@ export function ActiveExam() {
 
         if (data.shouldStopExam && !hasAutoSubmitted.current && !showResults) {
           hasAutoSubmitted.current = true;
+          setSessionControlState("TERMINATED");
           setLockedByExaminer(true);
           setExaminerNotice("Exam was terminated by examiner. Submitting...");
           setTimeout(() => handleSubmit(), 500);
@@ -369,13 +427,44 @@ export function ActiveExam() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [sessionId, loading, showResults, handleSubmit]);
+  }, [sessionId, loading, showResults, handleSubmit, exam?.duration, calculateRemainingSeconds]);
+
+  // Send heartbeats so examiner can see online/offline status.
+  useEffect(() => {
+    if (!sessionId || loading || showResults) return;
+
+    let cancelled = false;
+    const sendHeartbeat = async () => {
+      try {
+        const res = await api.postStudentExamHeartbeat(sessionId);
+        if (cancelled || !res?.success) return;
+        const controlState = (res.data?.controlState ||
+          "ACTIVE") as "ACTIVE" | "PAUSED" | "TERMINATED";
+        setSessionControlState(controlState);
+        setLockedByExaminer(
+          controlState === "PAUSED" || controlState === "TERMINATED",
+        );
+      } catch (err) {
+        console.error("[ActiveExam] Heartbeat failed", err);
+      }
+    };
+
+    sendHeartbeat();
+    const interval = setInterval(sendHeartbeat, 12000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [sessionId, loading, showResults]);
 
   // Timer effect with auto-submit
   useEffect(() => {
     if (!exam || showResults) return;
     const interval = setInterval(() => {
       setTimeLeft((prev) => {
+        if (lockedByExaminer || sessionControlState === "PAUSED") {
+          return prev;
+        }
         // Auto-submit when timer expires
         if (prev <= 1 && !hasAutoSubmitted.current) {
           hasAutoSubmitted.current = true;
@@ -387,7 +476,7 @@ export function ActiveExam() {
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [exam, showResults, handleSubmit]);
+  }, [exam, showResults, handleSubmit, lockedByExaminer, sessionControlState]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);

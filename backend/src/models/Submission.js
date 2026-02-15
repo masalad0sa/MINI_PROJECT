@@ -37,12 +37,17 @@ const answerSchema = new mongoose.Schema({
 });
 
 const examinerActionSchema = new mongoose.Schema({
+  actionId: {
+    type: String,
+    required: true,
+  },
   actionType: {
     type: String,
     enum: [
       "WARN",
       "CHAT",
       "PAUSE",
+      "RESUME",
       "TERMINATE",
       "MARK_FALSE_POSITIVE",
       "ESCALATE",
@@ -62,6 +67,16 @@ const examinerActionSchema = new mongoose.Schema({
   note: {
     type: String,
     default: "",
+  },
+  previousControlState: {
+    type: String,
+    enum: ["ACTIVE", "PAUSED", "TERMINATED"],
+    default: "ACTIVE",
+  },
+  newControlState: {
+    type: String,
+    enum: ["ACTIVE", "PAUSED", "TERMINATED"],
+    default: "ACTIVE",
   },
   timestamp: {
     type: Date,
@@ -107,6 +122,17 @@ const submissionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    controlState: {
+      type: String,
+      enum: ["ACTIVE", "PAUSED", "TERMINATED"],
+      default: "ACTIVE",
+    },
+    pauseStartedAt: Date,
+    totalPausedMs: {
+      type: Number,
+      default: 0,
+    },
+    lastHeartbeatAt: Date,
     reviewStatus: {
       type: String,
       enum: ["OPEN", "UNDER_REVIEW", "RESOLVED", "ESCALATED"],
@@ -125,6 +151,9 @@ const submissionSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+
+submissionSchema.index({ examId: 1, status: 1, updatedAt: -1 });
+submissionSchema.index({ examId: 1, studentId: 1 });
 
 const Submission = mongoose.model("Submission", submissionSchema);
 

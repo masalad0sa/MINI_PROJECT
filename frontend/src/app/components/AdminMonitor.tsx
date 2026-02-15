@@ -130,6 +130,17 @@ export function AdminMonitor() {
     return "bg-green-100 text-green-700 border-green-200";
   };
 
+  const getConnectionBadge = (onlineStatus: string) => {
+    switch ((onlineStatus || "").toUpperCase()) {
+      case "ONLINE":
+        return "bg-emerald-100 text-emerald-700 border-emerald-200";
+      case "UNSTABLE":
+        return "bg-amber-100 text-amber-700 border-amber-200";
+      default:
+        return "bg-slate-100 text-slate-600 border-slate-200";
+    }
+  };
+
   const getSeverityColor = (severity: string) => {
     switch (severity?.toUpperCase()) {
       case "CRITICAL": return "bg-red-100 text-red-700";
@@ -145,6 +156,7 @@ export function AdminMonitor() {
       | "WARN"
       | "CHAT"
       | "PAUSE"
+      | "RESUME"
       | "TERMINATE"
       | "MARK_FALSE_POSITIVE",
   ) => {
@@ -222,6 +234,10 @@ export function AdminMonitor() {
           {summary.total > 0 && (
             <div className="flex items-center gap-3 text-sm">
               <span className="bg-green-500/30 px-2 py-1 rounded">{summary.active} active</span>
+              <span className="bg-emerald-500/30 px-2 py-1 rounded">{summary.online || 0} online</span>
+              <span className="bg-yellow-500/30 px-2 py-1 rounded">{summary.unstable || 0} unstable</span>
+              <span className="bg-slate-500/30 px-2 py-1 rounded">{summary.offline || 0} offline</span>
+              <span className="bg-indigo-500/30 px-2 py-1 rounded">{summary.paused || 0} paused</span>
               <span className="bg-red-500/30 px-2 py-1 rounded">{summary.highRisk || 0} high risk</span>
               <span className="bg-amber-500/30 px-2 py-1 rounded">{summary.mediumRisk || 0} medium risk</span>
             </div>
@@ -289,12 +305,21 @@ export function AdminMonitor() {
                       <span className={`px-2 py-0.5 rounded-full border ${getRiskBadge(student.riskLevel)}`}>
                         {student.riskLevel} - {student.riskScore}/100
                       </span>
-                      <span className="text-slate-600 font-medium">
-                        {student.warningCount} warnings
+                      <span
+                        className={`px-2 py-0.5 rounded-full border font-medium ${getConnectionBadge(student.onlineStatus)}`}
+                      >
+                        {(student.onlineStatus || "OFFLINE").toUpperCase()}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2">
-                      <span>{student.lastAlertAt ? `Last alert ${new Date(student.lastAlertAt).toLocaleTimeString()}` : "No alerts yet"}</span>
+                      <span>
+                        {student.lastAlertAt
+                          ? `Last alert ${new Date(student.lastAlertAt).toLocaleTimeString()}`
+                          : "No alerts yet"}
+                      </span>
+                      <span className="font-medium capitalize">
+                        {(student.controlState || "ACTIVE").toLowerCase()}
+                      </span>
                       <span>{student.evidenceCount || 0} evidence</span>
                     </div>
                   </button>
@@ -345,8 +370,21 @@ export function AdminMonitor() {
                       <div className="rounded-lg p-3 border bg-slate-50 border-slate-200">
                         <div className="text-xs text-slate-500">Status</div>
                         <div className="font-semibold inline-flex px-2 py-0.5 mt-1 rounded-full border text-xs bg-slate-100 text-slate-700 border-slate-300">
-                          {toReadableLabel(selected.status)}
+                          {toReadableLabel(selected.status)} / {toReadableLabel(selected.controlState || "ACTIVE")}
                         </div>
+                      </div>
+                    </div>
+                    <div className="rounded-lg p-3 border bg-slate-50 border-slate-200">
+                      <div className="text-xs text-slate-500">Connection</div>
+                      <div className="font-semibold text-slate-800 flex items-center gap-2">
+                        <span className={`inline-flex px-2 py-0.5 rounded-full border text-xs ${getConnectionBadge(selected.onlineStatus)}`}>
+                          {(selected.onlineStatus || "OFFLINE").toUpperCase()}
+                        </span>
+                        <span className="text-xs text-slate-500">
+                          {selected.lastSeenAt
+                            ? `Last seen ${new Date(selected.lastSeenAt).toLocaleTimeString()}`
+                            : "No heartbeat yet"}
+                        </span>
                       </div>
                     </div>
                     <div className="rounded-lg p-3 border bg-slate-50 border-slate-200">
@@ -362,7 +400,7 @@ export function AdminMonitor() {
                       </div>
                     </div>
                   </div>
-                  <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-5 gap-3">
                     <button
                       onClick={() => performAction("WARN")}
                       disabled={!!actionLoading}
@@ -370,6 +408,20 @@ export function AdminMonitor() {
                     >
                       <MessageSquareWarning className="w-4 h-4" />
                       {actionLoading === "WARN" ? "Applying..." : "Warn"}
+                    </button>
+                    <button
+                      onClick={() => performAction("PAUSE")}
+                      disabled={!!actionLoading || (selected.controlState || "ACTIVE") === "PAUSED"}
+                      className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm disabled:opacity-60"
+                    >
+                      {actionLoading === "PAUSE" ? "Applying..." : "Pause"}
+                    </button>
+                    <button
+                      onClick={() => performAction("RESUME")}
+                      disabled={!!actionLoading || (selected.controlState || "ACTIVE") !== "PAUSED"}
+                      className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm disabled:opacity-60"
+                    >
+                      {actionLoading === "RESUME" ? "Applying..." : "Resume"}
                     </button>
                     <button
                       onClick={() => performAction("MARK_FALSE_POSITIVE")}

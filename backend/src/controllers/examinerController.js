@@ -35,6 +35,14 @@ const latestViolationTimestamp = (submission) => {
   return latest ? new Date(latest) : null;
 };
 
+const getOnlineStatus = (lastHeartbeatAt) => {
+  if (!lastHeartbeatAt) return "OFFLINE";
+  const ageMs = Date.now() - new Date(lastHeartbeatAt).getTime();
+  if (ageMs <= 20_000) return "ONLINE";
+  if (ageMs <= 45_000) return "UNSTABLE";
+  return "OFFLINE";
+};
+
 const ensureExamAccess = async (examId, user) => {
   const exam = await Exam.findById(examId).select(
     "title duration scheduledStart scheduledEnd passingScore createdBy",
@@ -78,6 +86,7 @@ export const monitorExam = async (req, res) => {
         studentEmail: sub.studentId?.email || "",
         studentUserId: sub.studentId?.userId || "",
         status: sub.status,
+        controlState: sub.controlState || "ACTIVE",
         progress: sub.totalQuestions
           ? Math.round((sub.answers.length / sub.totalQuestions) * 100)
           : 0,
@@ -88,6 +97,8 @@ export const monitorExam = async (req, res) => {
         riskScore,
         riskLevel: getRiskLevel(riskScore),
         lastAlertAt,
+        lastSeenAt: sub.lastHeartbeatAt || null,
+        onlineStatus: getOnlineStatus(sub.lastHeartbeatAt),
         evidenceCount: (sub.violations || []).filter((v) => !!v.evidence).length,
         examinerActions: sub.examinerActions || [],
         startedAt: sub.startedAt,
@@ -138,13 +149,20 @@ export const monitorExam = async (req, res) => {
           riskScore: student.riskScore,
           riskLevel: student.riskLevel,
           warningCount: student.warningCount,
+          onlineStatus: student.onlineStatus,
+          controlState: student.controlState,
           lastAlertAt: student.lastAlertAt,
+          lastSeenAt: student.lastSeenAt,
         })),
         violations: allViolations.slice(0, 50),
         summary: {
           total: students.length,
           active: students.length,
           flagged: students.filter((s) => s.isSuspicious).length,
+          online: students.filter((s) => s.onlineStatus === "ONLINE").length,
+          unstable: students.filter((s) => s.onlineStatus === "UNSTABLE").length,
+          offline: students.filter((s) => s.onlineStatus === "OFFLINE").length,
+          paused: students.filter((s) => s.controlState === "PAUSED").length,
           highRisk: students.filter((s) => s.riskLevel === "HIGH").length,
           mediumRisk: students.filter((s) => s.riskLevel === "MEDIUM").length,
         },
@@ -296,6 +314,7 @@ export const getSubmissionReport = async (req, res) => {
         totalQuestions: submission.totalQuestions,
         correctAnswers: submission.correctAnswers,
         status: submission.status,
+        controlState: submission.controlState || "ACTIVE",
         isSuspicious: submission.isSuspicious,
         autoSubmitted: submission.autoSubmitted,
         violations: submission.violations,
@@ -305,6 +324,8 @@ export const getSubmissionReport = async (req, res) => {
         examinerActions: submission.examinerActions || [],
         startedAt: submission.startedAt,
         submittedAt: submission.submittedAt,
+        pauseStartedAt: submission.pauseStartedAt || null,
+        totalPausedMs: submission.totalPausedMs || 0,
       },
     });
   } catch (error) {
@@ -323,6 +344,7 @@ export const takeSubmissionAction = async (req, res) => {
       "WARN",
       "CHAT",
       "PAUSE",
+      "RESUME",
       "TERMINATE",
       "MARK_FALSE_POSITIVE",
     ]);
@@ -330,6 +352,8 @@ export const takeSubmissionAction = async (req, res) => {
     if (!actionType || !allowedActions.has(actionType)) {
       return res.status(400).json({ message: "Invalid action type" });
     }
+
+    const normalizedNote = typeof note === "string" ? note.trim() : "";
 
     const submission = await Submission.findById(submissionId).populate(
       "examId",
@@ -348,22 +372,81 @@ export const takeSubmissionAction = async (req, res) => {
         .json({ message: "Access denied for this submission" });
     }
 
+    const activeStatuses = new Set(["started", "in-progress"]);
+    const isActiveSession = activeStatuses.has(submission.status);
+    if (actionType === "TERMINATE" && !normalizedNote) {
+      return res
+        .status(400)
+        .json({ message: "A termination reason is required in note" });
+    }
+
+    if (actionType === "PAUSE") {
+      if (!isActiveSession) {
+        return res
+          .status(409)
+          .json({ message: "Only active sessions can be paused" });
+      }
+      if (submission.controlState === "PAUSED") {
+        return res.status(409).json({ message: "Session is already paused" });
+      }
+      if (submission.controlState === "TERMINATED") {
+        return res.status(409).json({ message: "Session is already terminated" });
+      }
+    }
+
+    if (actionType === "RESUME") {
+      if (!isActiveSession) {
+        return res
+          .status(409)
+          .json({ message: "Only active sessions can be resumed" });
+      }
+      if (submission.controlState !== "PAUSED") {
+        return res.status(409).json({ message: "Session is not paused" });
+      }
+    }
+
+    if (actionType === "TERMINATE" && submission.controlState === "TERMINATED") {
+      return res.status(409).json({ message: "Session is already terminated" });
+    }
+
     if (!submission.examinerActions) submission.examinerActions = [];
 
-    submission.examinerActions.push({
-      actionType,
-      actorId: req.user._id,
-      actorName: req.user.name,
-      note: note || "",
-      timestamp: new Date(),
-    });
-    submission.lastInterventionAt = new Date();
+    const previousControlState = submission.controlState || "ACTIVE";
+    let nextControlState = previousControlState;
+    const now = new Date();
 
     switch (actionType) {
+      case "PAUSE":
+        nextControlState = "PAUSED";
+        submission.controlState = "PAUSED";
+        submission.pauseStartedAt = now;
+        break;
+      case "RESUME":
+        nextControlState = "ACTIVE";
+        if (submission.pauseStartedAt) {
+          const pausedFor = now.getTime() - new Date(submission.pauseStartedAt).getTime();
+          submission.totalPausedMs = Math.max(
+            0,
+            (submission.totalPausedMs || 0) + pausedFor,
+          );
+        }
+        submission.pauseStartedAt = null;
+        submission.controlState = "ACTIVE";
+        break;
       case "TERMINATE":
+        nextControlState = "TERMINATED";
+        if (submission.pauseStartedAt) {
+          const pausedFor = now.getTime() - new Date(submission.pauseStartedAt).getTime();
+          submission.totalPausedMs = Math.max(
+            0,
+            (submission.totalPausedMs || 0) + pausedFor,
+          );
+          submission.pauseStartedAt = null;
+        }
+        submission.controlState = "TERMINATED";
         submission.status = "auto-submitted";
         submission.autoSubmitted = true;
-        submission.submittedAt = submission.submittedAt || new Date();
+        submission.submittedAt = submission.submittedAt || now;
         break;
       case "MARK_FALSE_POSITIVE":
         submission.isSuspicious = false;
@@ -372,6 +455,19 @@ export const takeSubmissionAction = async (req, res) => {
         break;
     }
 
+    const actionId = `act_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    submission.examinerActions.push({
+      actionId,
+      actionType,
+      actorId: req.user._id,
+      actorName: req.user.name,
+      note: normalizedNote,
+      previousControlState,
+      newControlState: nextControlState,
+      timestamp: now,
+    });
+    submission.lastInterventionAt = now;
+
     await submission.save();
 
     res.status(200).json({
@@ -379,7 +475,11 @@ export const takeSubmissionAction = async (req, res) => {
       message: "Action recorded",
       data: {
         submissionId: submission._id,
+        actionId,
         status: submission.status,
+        controlState: submission.controlState || "ACTIVE",
+        pauseStartedAt: submission.pauseStartedAt || null,
+        totalPausedMs: submission.totalPausedMs || 0,
         autoSubmitted: submission.autoSubmitted,
         isSuspicious: submission.isSuspicious,
         lastInterventionAt: submission.lastInterventionAt,

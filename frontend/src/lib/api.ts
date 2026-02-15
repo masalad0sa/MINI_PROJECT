@@ -177,6 +177,19 @@ export async function getStudentExamSessionStatus(sessionId: string) {
   return handleResponse(res);
 }
 
+export async function postStudentExamHeartbeat(sessionId: string) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/student/exam/session/${sessionId}/heartbeat`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({}),
+  });
+  return handleResponse(res);
+}
+
 export async function logViolation(
   sessionId: string,
   type: string,
@@ -278,6 +291,7 @@ export async function takeExaminerSubmissionAction(
     | "WARN"
     | "CHAT"
     | "PAUSE"
+    | "RESUME"
     | "TERMINATE"
     | "MARK_FALSE_POSITIVE",
   note?: string,
