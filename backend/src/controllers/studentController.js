@@ -75,12 +75,20 @@ export const startExam = async (req, res) => {
     });
     
     if (existingSubmission) {
+      const latestAction = existingSubmission.examinerActions?.length
+        ? existingSubmission.examinerActions[existingSubmission.examinerActions.length - 1]
+        : null;
+
       // Return existing session so exam can be resumed
       return res.status(200).json({
         success: true,
         message: "Resuming existing exam session",
         data: {
           sessionId: existingSubmission._id,
+          status: existingSubmission.status,
+          autoSubmitted: existingSubmission.autoSubmitted || false,
+          violationCount: existingSubmission.violationCount || 0,
+          latestAction,
           exam: {
             id: exam._id,
             title: exam.title,
@@ -105,6 +113,10 @@ export const startExam = async (req, res) => {
       message: "Exam started",
       data: {
         sessionId: submission._id,
+        status: submission.status,
+        autoSubmitted: submission.autoSubmitted || false,
+        violationCount: submission.violationCount || 0,
+        latestAction: null,
         exam: {
           id: exam._id,
           title: exam.title,
@@ -225,6 +237,60 @@ export const getExamResults = async (req, res) => {
     res
       .status(500)
       .json({ message: "Failed to fetch results", error: error.message });
+  }
+};
+
+export const getExamSessionStatus = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const studentId = req.user?.id;
+
+    const submission = await Submission.findById(sessionId).select(
+      "studentId examId status violationCount isSuspicious autoSubmitted examinerActions submittedAt updatedAt",
+    );
+
+    if (!submission) {
+      return res.status(404).json({ message: "Submission not found" });
+    }
+
+    if (submission.studentId.toString() !== studentId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const latestAction =
+      submission.examinerActions && submission.examinerActions.length > 0
+        ? [...submission.examinerActions].sort(
+            (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+          )[0]
+        : null;
+
+    const latestActionType = latestAction?.actionType || null;
+    const terminatedByExaminer = latestActionType === "TERMINATE";
+    const shouldStopExam =
+      terminatedByExaminer ||
+      (submission.autoSubmitted && submission.status === "auto-submitted");
+
+    res.status(200).json({
+      success: true,
+      message: "Session status fetched",
+      data: {
+        sessionId: submission._id,
+        examId: submission.examId,
+        status: submission.status,
+        violationCount: submission.violationCount || 0,
+        isSuspicious: submission.isSuspicious || false,
+        autoSubmitted: submission.autoSubmitted || false,
+        latestAction,
+        terminatedByExaminer,
+        shouldStopExam,
+        submittedAt: submission.submittedAt || null,
+        updatedAt: submission.updatedAt,
+      },
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to fetch session status", error: error.message });
   }
 };
 

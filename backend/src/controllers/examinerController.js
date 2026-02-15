@@ -58,8 +58,12 @@ export const monitorExam = async (req, res) => {
       return res.status(statusCode).json({ message: access.reason });
     }
     const exam = access.exam;
+    const activeStatuses = ["started", "in-progress"];
 
-    const submissions = await Submission.find({ examId })
+    const submissions = await Submission.find({
+      examId,
+      status: { $in: activeStatuses },
+    })
       .populate("studentId", "name email userId")
       .sort({ startedAt: -1 });
 
@@ -85,7 +89,6 @@ export const monitorExam = async (req, res) => {
         riskLevel: getRiskLevel(riskScore),
         lastAlertAt,
         evidenceCount: (sub.violations || []).filter((v) => !!v.evidence).length,
-        reviewStatus: sub.reviewStatus || "OPEN",
         examinerActions: sub.examinerActions || [],
         startedAt: sub.startedAt,
         submittedAt: sub.submittedAt,
@@ -135,18 +138,12 @@ export const monitorExam = async (req, res) => {
           riskScore: student.riskScore,
           riskLevel: student.riskLevel,
           warningCount: student.warningCount,
-          reviewStatus: student.reviewStatus,
           lastAlertAt: student.lastAlertAt,
         })),
         violations: allViolations.slice(0, 50),
         summary: {
           total: students.length,
-          active: students.filter(
-            (s) => s.status === "started" || s.status === "in-progress",
-          ).length,
-          submitted: students.filter((s) =>
-            ["submitted", "graded", "auto-submitted"].includes(s.status),
-          ).length,
+          active: students.length,
           flagged: students.filter((s) => s.isSuspicious).length,
           highRisk: students.filter((s) => s.riskLevel === "HIGH").length,
           mediumRisk: students.filter((s) => s.riskLevel === "MEDIUM").length,
@@ -204,7 +201,6 @@ export const getIntegrityReport = async (req, res) => {
         violations: sub.violations || [],
         violationsByType,
         suspicionScore,
-        reviewStatus: sub.reviewStatus || "OPEN",
         examinerActions: sub.examinerActions || [],
         startedAt: sub.startedAt,
         submittedAt: sub.submittedAt,
@@ -306,7 +302,6 @@ export const getSubmissionReport = async (req, res) => {
         violationCount: submission.violationCount,
         violationsByType,
         suspicionScore,
-        reviewStatus: submission.reviewStatus || "OPEN",
         examinerActions: submission.examinerActions || [],
         startedAt: submission.startedAt,
         submittedAt: submission.submittedAt,
@@ -330,8 +325,6 @@ export const takeSubmissionAction = async (req, res) => {
       "PAUSE",
       "TERMINATE",
       "MARK_FALSE_POSITIVE",
-      "ESCALATE",
-      "RESOLVE",
     ]);
 
     if (!actionType || !allowedActions.has(actionType)) {
@@ -367,26 +360,13 @@ export const takeSubmissionAction = async (req, res) => {
     submission.lastInterventionAt = new Date();
 
     switch (actionType) {
-      case "WARN":
-      case "CHAT":
-      case "PAUSE":
-        submission.reviewStatus = "UNDER_REVIEW";
-        break;
       case "TERMINATE":
         submission.status = "auto-submitted";
         submission.autoSubmitted = true;
         submission.submittedAt = submission.submittedAt || new Date();
-        submission.reviewStatus = "ESCALATED";
         break;
       case "MARK_FALSE_POSITIVE":
         submission.isSuspicious = false;
-        submission.reviewStatus = "RESOLVED";
-        break;
-      case "ESCALATE":
-        submission.reviewStatus = "ESCALATED";
-        break;
-      case "RESOLVE":
-        submission.reviewStatus = "RESOLVED";
         break;
       default:
         break;
@@ -399,7 +379,6 @@ export const takeSubmissionAction = async (req, res) => {
       message: "Action recorded",
       data: {
         submissionId: submission._id,
-        reviewStatus: submission.reviewStatus,
         status: submission.status,
         autoSubmitted: submission.autoSubmitted,
         isSuspicious: submission.isSuspicious,

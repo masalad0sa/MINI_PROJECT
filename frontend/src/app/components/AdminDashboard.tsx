@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -21,11 +21,8 @@ export function AdminDashboard() {
   const [activeExams, setActiveExams] = useState<any[]>([]);
   const [recentViolations, setRecentViolations] = useState<any[]>([]);
 
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
-  const loadDashboard = async () => {
+  const loadDashboard = useCallback(async (showLoader = false) => {
+    if (showLoader) setLoading(true);
     try {
       const res = await api.getAdminDashboard();
       if (res.success) {
@@ -36,9 +33,15 @@ export function AdminDashboard() {
     } catch (err) {
       console.error("Failed to load dashboard", err);
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadDashboard(true);
+    const interval = setInterval(() => loadDashboard(false), 15000);
+    return () => clearInterval(interval);
+  }, [loadDashboard]);
 
   const getSeverityColor = (severity: string) => {
     switch (severity?.toUpperCase()) {
@@ -126,7 +129,7 @@ export function AdminDashboard() {
                     <div>
                       <div className="font-medium text-slate-800">{exam.examTitle}</div>
                       <div className="text-sm text-slate-500">
-                        {exam.studentCount} students • {exam.violationCount} violations
+                        {exam.studentCount} students - {exam.violationCount} violations
                       </div>
                     </div>
                     <button
@@ -165,7 +168,7 @@ export function AdminDashboard() {
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-slate-800 text-sm">{v.studentName}</div>
                       <div className="text-xs text-slate-500">
-                        {v.violation?.type?.replace(/_/g, " ")} • {v.examTitle}
+                        {v.violation?.type?.replace(/_/g, " ")} - {v.examTitle}
                       </div>
                     </div>
                     <div className="text-xs text-slate-400 font-mono">

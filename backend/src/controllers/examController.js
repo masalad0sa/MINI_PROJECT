@@ -90,9 +90,13 @@ export const getExaminerStats = async (req, res) => {
           status: { $in: ["started", "in-progress"] },
         });
 
-        const pendingReviews = await Submission.countDocuments({
+        const flaggedSubmissions = await Submission.countDocuments({
           examId: { $in: examIds },
-          $or: [{ isSuspicious: true }, { status: "submitted" }],
+          status: { $in: ["submitted", "auto-submitted", "graded"] },
+          $or: [
+            { isSuspicious: true },
+            { violationCount: { $gt: 0 } },
+          ],
         });
 
         const result = await Submission.aggregate([
@@ -108,7 +112,7 @@ export const getExaminerStats = async (req, res) => {
         const stats = {
           totalStudents: totalStudents.length,
           activeStudents: activeSessions,
-          pendingReviews,
+          flaggedSubmissions,
           averageScore: result[0]?.avgScore || 0,
         };
 

@@ -66,6 +66,7 @@ npm start
 - `GET /api/student/dashboard/:id` - Get student dashboard
 - `POST /api/student/exam/start/:examId` - Start exam
 - `POST /api/student/exam/submit` - Submit exam
+- `GET /api/student/exam/session/:sessionId/status` - Poll live session status/actions
 - `GET /api/student/exam/:examId/results` - Get exam results
 
 ### Admin

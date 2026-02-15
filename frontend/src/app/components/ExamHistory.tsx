@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../../lib/AuthContext";
 import {
   FileCheck,
@@ -45,47 +45,56 @@ export function ExamHistory() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    async function fetchHistory() {
+  const fetchHistory = useCallback(
+    async (showLoader = false) => {
       if (!user?.id) return;
+      if (showLoader) setLoading(true);
+
       try {
-        setLoading(true);
         const res = await api.getStudentDashboard(user.id);
         if (res?.success && res.data?.completedExams) {
-           const mappedHistory: ExamRecord[] = res.data.completedExams.map((sub: any) => {
-              const score = sub.score || 0;
-              const passingScore = sub.examId?.passingScore || 50; // Default 50 if missing
-              // Use persisted status if true, otherwise calculate. This handles legacy default=false.
-              const passed = sub.isPass === true || score >= passingScore;
-              
-              return {
-                id: sub._id,
-                examTitle: sub.examId?.title || "Unknown Exam",
-                examDate: sub.submittedAt || sub.createdAt,
-                score: score,
-                totalQuestions: sub.totalQuestions || 0,
-                passingScore: passingScore,
-                passed: passed,
-                duration: sub.duration || 0,
-                status: sub.status,
-                autoSubmitted: sub.autoSubmitted || false,
-                isSuspicious: sub.isSuspicious || false,
-                violationCount: sub.violationCount || 0,
-                violations: sub.violations || []
-             };
-           });
-           // Sort by date descending
-           mappedHistory.sort((a, b) => new Date(b.examDate).getTime() - new Date(a.examDate).getTime());
-           setExamHistory(mappedHistory);
+          const mappedHistory: ExamRecord[] = res.data.completedExams.map((sub: any) => {
+            const score = sub.score || 0;
+            const passingScore = sub.examId?.passingScore || 50;
+            const passed = sub.isPass === true || score >= passingScore;
+
+            return {
+              id: sub._id,
+              examTitle: sub.examId?.title || "Unknown Exam",
+              examDate: sub.submittedAt || sub.createdAt,
+              score,
+              totalQuestions: sub.totalQuestions || 0,
+              passingScore,
+              passed,
+              duration: sub.duration || 0,
+              status: sub.status,
+              autoSubmitted: sub.autoSubmitted || false,
+              isSuspicious: sub.isSuspicious || false,
+              violationCount: sub.violationCount || 0,
+              violations: sub.violations || [],
+            };
+          });
+
+          mappedHistory.sort(
+            (a, b) => new Date(b.examDate).getTime() - new Date(a.examDate).getTime(),
+          );
+          setExamHistory(mappedHistory);
         }
       } catch (err) {
         console.error("Failed to fetch exam history", err);
       } finally {
-        setLoading(false);
+        if (showLoader) setLoading(false);
       }
-    }
-    fetchHistory();
-  }, [user]);
+    },
+    [user?.id],
+  );
+
+  useEffect(() => {
+    if (!user?.id) return;
+    fetchHistory(true);
+    const interval = setInterval(() => fetchHistory(false), 30000);
+    return () => clearInterval(interval);
+  }, [user?.id, fetchHistory]);
 
   const formatDate = (dateStr: string) => {
     if (!dateStr) return "N/A";
@@ -184,8 +193,9 @@ export function ExamHistory() {
           <div className="bg-white rounded-xl shadow-md p-6 border border-slate-200">
             <div className="text-3xl font-bold text-slate-700 mb-1">
               {Math.round(
-                examHistory.reduce((acc, e) => acc + e.score, 0) /
-                  examHistory.length
+                examHistory.length
+                  ? examHistory.reduce((acc, e) => acc + e.score, 0) / examHistory.length
+                  : 0
               )}
               %
             </div>

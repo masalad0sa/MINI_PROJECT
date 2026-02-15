@@ -50,6 +50,13 @@ export function MainLayout() {
 
     const examinerItems: NavItem[] = [
       { path: "/examiner", name: "Dashboard", icon: LayoutDashboard },
+      { path: "/examiner/monitor", name: "Live Monitor", icon: Monitor },
+      { path: "/examiner/reports", name: "Integrity Reports", icon: FileCheck },
+      { path: "/exam/create", name: "Create Exam", icon: PlusCircle },
+    ];
+
+    const examinerAdminItems: NavItem[] = [
+      { path: "/examiner", name: "Examiner Dashboard", icon: LayoutDashboard },
       { path: "/exam/create", name: "Create Exam", icon: PlusCircle },
     ];
 
@@ -62,7 +69,7 @@ export function MainLayout() {
 
     // Admins see all screens
     if (user?.role === "admin" || user?.role === "moderator") {
-      return [...studentItems, ...examinerItems, ...adminItems];
+      return [...studentItems, ...examinerAdminItems, ...adminItems];
     }
     // Examiners see examiner dashboard + create exam
     if (user?.role === "examiner") {

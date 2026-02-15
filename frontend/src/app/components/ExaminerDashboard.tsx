@@ -20,7 +20,7 @@ export function ExaminerDashboard() {
     activeExams: 0,
     totalStudents: 0,
     activeStudents: 0,
-    pendingReviews: 0,
+    flaggedSubmissions: 0,
     averageScore: 0
   });
   const [exams, setExams] = useState<any[]>([]);
@@ -120,10 +120,10 @@ export function ExaminerDashboard() {
         />
         <StatCard 
           icon={AlertTriangle} 
-          label="Pending Reviews" 
-          value={stats.pendingReviews} 
+          label="Flagged Submissions" 
+          value={stats.flaggedSubmissions} 
           color="bg-amber-50 text-amber-600"
-          tooltip="Exams that are submitted or flagged for suspicious activity"
+          tooltip="Submitted/auto-submitted exams flagged by suspicious behavior or violations"
         />
         <StatCard 
           icon={BarChart} 
@@ -206,8 +206,8 @@ export function ExaminerDashboard() {
                     />
                     <ActionButton 
                         icon={CheckCircle} 
-                        label="Review Submissions" 
-                        desc="Grade and review flags"
+                        label="Integrity Reports" 
+                        desc="Inspect flagged sessions"
                         onClick={() => navigate('/examiner/reports')} 
                     />
                 </div>
@@ -219,7 +219,7 @@ export function ExaminerDashboard() {
                 <ul className="text-sm text-blue-800 space-y-2 list-disc list-inside">
                     <li>Create exams with strict proctoring rules.</li>
                     <li>Monitor students in real-time.</li>
-                    <li>Review AI-generated integrity reports.</li>
+                    <li>Use integrity reports to investigate suspicious sessions.</li>
                 </ul>
             </div>
         </div>

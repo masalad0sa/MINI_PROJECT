@@ -51,6 +51,9 @@ export function ActiveExam() {
   const [showSecurityWarning, setShowSecurityWarning] = useState(false);
   const [lastViolationType, setLastViolationType] = useState<string>("TAB_SWITCH");
   const [securityEnabled, setSecurityEnabled] = useState(false);
+  const [examinerNotice, setExaminerNotice] = useState<string | null>(null);
+  const [lockedByExaminer, setLockedByExaminer] = useState(false);
+  const lastExaminerActionTimestamp = useRef<string>("");
 
   // Start webcam
   useEffect(() => {
@@ -77,6 +80,12 @@ export function ActiveExam() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!examinerNotice) return;
+    const timer = setTimeout(() => setExaminerNotice(null), 8000);
+    return () => clearTimeout(timer);
+  }, [examinerNotice]);
 
   // Attach stream to video element when it becomes available
 
@@ -289,6 +298,79 @@ export function ActiveExam() {
     }
   }, [exam, sessionId, loading]);
 
+  // Poll examiner actions/session status and reflect changes on student UI.
+  useEffect(() => {
+    if (!sessionId || loading || showResults) return;
+
+    let cancelled = false;
+
+    const syncSessionStatus = async () => {
+      try {
+        const res = await api.getStudentExamSessionStatus(sessionId);
+        if (!res?.success || cancelled) return;
+
+        const data = res.data || {};
+        if (typeof data.violationCount === "number") {
+          setViolationCount(data.violationCount);
+        }
+
+        const latestAction = data.latestAction;
+        if (
+          latestAction?.timestamp &&
+          latestAction.timestamp !== lastExaminerActionTimestamp.current
+        ) {
+          lastExaminerActionTimestamp.current = latestAction.timestamp;
+          const actor = latestAction.actorName || "Examiner";
+          const note = latestAction.note ? ` (${latestAction.note})` : "";
+
+          switch (latestAction.actionType) {
+            case "WARN":
+              setExaminerNotice(`${actor} sent a warning${note}.`);
+              break;
+            case "CHAT":
+              setExaminerNotice(`${actor} sent a message${note}.`);
+              break;
+            case "PAUSE":
+              setLockedByExaminer(true);
+              setExaminerNotice(`Exam paused by ${actor}${note}.`);
+              break;
+            case "MARK_FALSE_POSITIVE":
+              setLockedByExaminer(false);
+              setExaminerNotice(`Previous flag marked false positive by ${actor}.`);
+              break;
+            case "TERMINATE":
+              setLockedByExaminer(true);
+              setExaminerNotice(`Exam terminated by ${actor}${note}. Submitting...`);
+              if (!hasAutoSubmitted.current && !showResults) {
+                hasAutoSubmitted.current = true;
+                setTimeout(() => handleSubmit(), 500);
+              }
+              break;
+            default:
+              break;
+          }
+        }
+
+        if (data.shouldStopExam && !hasAutoSubmitted.current && !showResults) {
+          hasAutoSubmitted.current = true;
+          setLockedByExaminer(true);
+          setExaminerNotice("Exam was terminated by examiner. Submitting...");
+          setTimeout(() => handleSubmit(), 500);
+        }
+      } catch (err) {
+        console.error("[ActiveExam] Failed to sync session status", err);
+      }
+    };
+
+    syncSessionStatus();
+    const interval = setInterval(syncSessionStatus, 3000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [sessionId, loading, showResults, handleSubmit]);
+
   // Timer effect with auto-submit
   useEffect(() => {
     if (!exam || showResults) return;
@@ -315,12 +397,14 @@ export function ActiveExam() {
   };
 
   const handleAnswerChange = (optionIndex: number) => {
+    if (lockedByExaminer) return;
     const newAnswers = [...answers];
     newAnswers[currentQuestion] = optionIndex;
     setAnswers(newAnswers);
   };
 
   const toggleMark = () => {
+    if (lockedByExaminer) return;
     const newMarked = new Set(markedQuestions);
     if (newMarked.has(currentQuestion)) {
       newMarked.delete(currentQuestion);
@@ -602,6 +686,18 @@ export function ActiveExam() {
         </div>
       </div>
 
+      {(examinerNotice || lockedByExaminer) && (
+        <div
+          className={`px-8 py-2 text-sm border-b ${
+            lockedByExaminer
+              ? "bg-red-50 text-red-700 border-red-200"
+              : "bg-blue-50 text-blue-700 border-blue-200"
+          }`}
+        >
+          {examinerNotice || "Exam is currently locked by examiner action."}
+        </div>
+      )}
+
       {/* Security Warning Modal */}
       <WarningModal
         isOpen={showSecurityWarning}
@@ -745,11 +841,12 @@ export function ActiveExam() {
                   </h2>
                   <button
                     onClick={toggleMark}
+                    disabled={lockedByExaminer}
                     className={`flex items-center gap-2 text-sm font-medium transition-colors ${
                       markedQuestions.has(currentQuestion)
                         ? "text-amber-600 hover:text-amber-700"
                         : "text-slate-600 hover:text-amber-600"
-                    }`}
+                    } ${lockedByExaminer ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
                     <Flag className="w-4 h-4" />
                     {markedQuestions.has(currentQuestion)
@@ -778,6 +875,7 @@ export function ActiveExam() {
                         type="radio"
                         name="answer"
                         checked={answers[currentQuestion] === idx}
+                        disabled={lockedByExaminer}
                         onChange={() => handleAnswerChange(idx)}
                         className="mt-1 w-4 h-4 text-blue-600"
                       />
@@ -798,7 +896,7 @@ export function ActiveExam() {
                 onClick={() =>
                   canGoPrev && setCurrentQuestion(currentQuestion - 1)
                 }
-                disabled={!canGoPrev}
+                disabled={!canGoPrev || lockedByExaminer}
                 className="flex items-center gap-2 px-6 py-3 bg-slate-200 hover:bg-slate-300 disabled:opacity-50 text-slate-700 rounded-lg font-medium transition-colors"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -808,7 +906,7 @@ export function ActiveExam() {
               {currentQuestion === questions.length - 1 ? (
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting}
+                  disabled={submitting || lockedByExaminer}
                   className="px-8 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
                 >
                   {submitting ? "Submitting..." : "Submit Exam"}
@@ -818,7 +916,7 @@ export function ActiveExam() {
                   onClick={() =>
                     canGoNext && setCurrentQuestion(currentQuestion + 1)
                   }
-                  disabled={!canGoNext}
+                  disabled={!canGoNext || lockedByExaminer}
                   className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg font-medium transition-colors"
                 >
                   Next
@@ -834,14 +932,32 @@ export function ActiveExam() {
           <h3 className="font-semibold text-slate-700 mb-4">Exam Status</h3>
 
           {/* Status */}
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 mb-4">
+          <div
+            className={`rounded-lg p-4 mb-4 border ${
+              lockedByExaminer
+                ? "bg-red-50 border-red-200"
+                : "bg-green-50 border-green-200"
+            }`}
+          >
             <div className="flex items-center gap-2 mb-2">
-              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span className="font-semibold text-green-800 text-sm">
-                Status: Active
+              <div
+                className={`w-2 h-2 rounded-full animate-pulse ${
+                  lockedByExaminer ? "bg-red-500" : "bg-green-500"
+                }`}
+              ></div>
+              <span
+                className={`font-semibold text-sm ${
+                  lockedByExaminer ? "text-red-800" : "text-green-800"
+                }`}
+              >
+                Status: {lockedByExaminer ? "Locked by Examiner" : "Active"}
               </span>
             </div>
-            <p className="text-green-700 text-xs">All systems operational</p>
+            <p className={`text-xs ${lockedByExaminer ? "text-red-700" : "text-green-700"}`}>
+              {lockedByExaminer
+                ? "Waiting for examiner action resolution."
+                : "All systems operational"}
+            </p>
           </div>
 
           {/* Progress */}

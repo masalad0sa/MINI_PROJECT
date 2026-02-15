@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   CheckCircle,
@@ -13,8 +13,10 @@ import {
   Shield,
 } from "lucide-react";
 import * as api from "../../lib/api";
+import { useAuth } from "../../lib/AuthContext";
 
 export function IntegrityReport() {
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const initialExamId = searchParams.get("examId") || "";
   
@@ -25,39 +27,58 @@ export function IntegrityReport() {
   const [reportLoading, setReportLoading] = useState(false);
   const [expandedStudent, setExpandedStudent] = useState<string | null>(null);
 
-  useEffect(() => {
-    const loadExams = async () => {
+  const loadExams = useCallback(
+    async (showLoader = false) => {
+      if (showLoader) setLoading(true);
       try {
-        const res = await api.getExams();
+        const res =
+          user?.role === "examiner" ? await api.getMyExams() : await api.getExams();
         if (res.success) {
           setExams(res.data || res.exams || []);
         }
       } catch (err) {
         console.error("Failed to load exams", err);
       } finally {
-        setLoading(false);
+        if (showLoader) setLoading(false);
       }
-    };
-    loadExams();
-  }, []);
+    },
+    [user?.role],
+  );
+
+  const loadReport = useCallback(
+    async (showLoader = false) => {
+      if (!selectedExamId) return;
+      if (showLoader) setReportLoading(true);
+      try {
+        const res = await api.getExaminerIntegrityReport(selectedExamId);
+        if (res.success) {
+          setReportData(res.data);
+        }
+      } catch (err) {
+        console.error("Failed to load report", err);
+      } finally {
+        if (showLoader) setReportLoading(false);
+      }
+    },
+    [selectedExamId],
+  );
 
   useEffect(() => {
-    if (selectedExamId) loadReport();
-  }, [selectedExamId]);
+    loadExams(true);
+    const interval = setInterval(() => loadExams(false), 30000);
+    return () => clearInterval(interval);
+  }, [loadExams]);
 
-  const loadReport = async () => {
-    setReportLoading(true);
-    try {
-      const res = await api.getExaminerIntegrityReport(selectedExamId);
-      if (res.success) {
-        setReportData(res.data);
-      }
-    } catch (err) {
-      console.error("Failed to load report", err);
-    } finally {
-      setReportLoading(false);
+  useEffect(() => {
+    if (!selectedExamId) {
+      setReportData(null);
+      setExpandedStudent(null);
+      return;
     }
-  };
+    loadReport(true);
+    const interval = setInterval(() => loadReport(false), 10000);
+    return () => clearInterval(interval);
+  }, [selectedExamId, loadReport]);
 
   const getSuspicionLevel = (score: number) => {
     if (score <= 20) return { label: "Low Risk", color: "text-green-600", bg: "bg-green-50", border: "border-green-200", icon: CheckCircle, ringColor: "bg-green-500" };
@@ -73,18 +94,7 @@ export function IntegrityReport() {
     }
   };
 
-  const getReviewStatusColor = (status: string) => {
-    switch (status) {
-      case "ESCALATED":
-        return "bg-red-100 text-red-700 border-red-200";
-      case "UNDER_REVIEW":
-        return "bg-blue-100 text-blue-700 border-blue-200";
-      case "RESOLVED":
-        return "bg-green-100 text-green-700 border-green-200";
-      default:
-        return "bg-slate-100 text-slate-700 border-slate-200";
-    }
-  };
+  const visibleReports = reportData?.reports || [];
 
   if (loading) {
     return (
@@ -105,7 +115,7 @@ export function IntegrityReport() {
                 <Shield className="w-8 h-8" />
                 <h1 className="text-2xl font-bold">Integrity Reports</h1>
               </div>
-              <p className="text-blue-100">View exam integrity analysis for all submissions</p>
+              <p className="text-blue-100">View exam integrity analysis for submissions</p>
             </div>
             <div>
               <select
@@ -137,7 +147,7 @@ export function IntegrityReport() {
             {/* Summary Bar */}
             <div className="bg-white rounded-xl shadow-md border border-slate-200 p-6 mb-6">
               <h2 className="text-lg font-semibold text-slate-800 mb-4">
-                {reportData.exam?.title} — Summary
+                {reportData.exam?.title} - Summary
               </h2>
               <div className="grid grid-cols-4 gap-4">
                 <div className="text-center p-4 bg-blue-50 rounded-lg">
@@ -157,11 +167,16 @@ export function IntegrityReport() {
                   <div className="text-sm text-amber-800">Violations</div>
                 </div>
               </div>
+              <div className="mt-4 flex items-center justify-between">
+                <div className="text-sm text-slate-600">
+                  Showing {visibleReports.length} of {(reportData.reports || []).length} submissions
+                </div>
+              </div>
             </div>
 
             {/* Student Reports */}
             <div className="space-y-4">
-              {(reportData.reports || []).map((report: any) => {
+              {visibleReports.map((report: any) => {
                 const suspicion = getSuspicionLevel(report.suspicionScore);
                 const isExpanded = expandedStudent === report.submissionId;
 
@@ -186,17 +201,11 @@ export function IntegrityReport() {
                           <div className="text-lg font-bold text-slate-800">{report.score ?? "N/A"}%</div>
                           <div className="text-xs text-slate-500">Score</div>
                         </div>
-                        <div className={`px-3 py-1 rounded-full text-xs font-medium border ${getReviewStatusColor(report.reviewStatus || "OPEN")}`}>
-                          {(report.reviewStatus || "OPEN").replace(/_/g, " ")}
-                        </div>
                         <div className={`px-3 py-1 rounded-full text-xs font-medium ${suspicion.bg} ${suspicion.color} ${suspicion.border} border`}>
-                          {report.suspicionScore}% — {suspicion.label}
+                          {report.suspicionScore}% - {suspicion.label}
                         </div>
                         <div className="text-sm text-slate-500">
                           {report.violationCount} violations
-                        </div>
-                        <div className="text-sm text-slate-500">
-                          {report.examinerActions?.length || 0} actions
                         </div>
                         {isExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
                       </div>
@@ -283,7 +292,7 @@ export function IntegrityReport() {
                 );
               })}
 
-              {(reportData.reports || []).length === 0 && (
+              {visibleReports.length === 0 && (
                 <div className="bg-white rounded-xl shadow-md p-8 text-center">
                   <CheckCircle className="w-12 h-12 mx-auto mb-3 text-green-500" />
                   <p className="text-slate-600">No submissions found for this exam</p>
@@ -293,7 +302,7 @@ export function IntegrityReport() {
 
             {/* Footer */}
             <div className="mt-6 bg-slate-50 rounded-xl p-4 text-center text-sm text-slate-500">
-              Report generated on {new Date().toLocaleString()} · SmartProctor AI System
+              Report generated on {new Date().toLocaleString()} - SmartProctor AI System
             </div>
           </>
         ) : null}

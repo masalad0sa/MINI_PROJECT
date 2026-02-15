@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   Calendar,
@@ -32,27 +32,32 @@ export function UpcomingExams() {
   const [error, setError] = useState("");
   const [now, setNow] = useState(new Date());
 
-  useEffect(() => {
-    loadExams();
-    // Update current time every minute
-    const interval = setInterval(() => setNow(new Date()), 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadExams = async () => {
+  const loadExams = useCallback(async (showLoader = false) => {
+    if (showLoader) setLoading(true);
     try {
       const res = await api.getExams();
       if (res.success) {
         setExams(res.data || res.exams || []);
+        setError("");
       } else {
         setError(res.message || "Failed to load exams");
       }
     } catch {
       setError("Failed to load exams");
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadExams(true);
+    const clockInterval = setInterval(() => setNow(new Date()), 60000);
+    const dataInterval = setInterval(() => loadExams(false), 30000);
+    return () => {
+      clearInterval(clockInterval);
+      clearInterval(dataInterval);
+    };
+  }, [loadExams]);
 
   const formatDateTime = (dateStr: string) => {
     return new Date(dateStr).toLocaleString("en-US", {

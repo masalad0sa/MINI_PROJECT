@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Users,
   Search,
@@ -30,8 +30,8 @@ export function UserManagement() {
   const [suspendReason, setSuspendReason] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
-  const loadUsers = async (role?: string) => {
-    setLoading(true);
+  const loadUsers = useCallback(async (role?: string, showLoader = false) => {
+    if (showLoader) setLoading(true);
     try {
       const filterRole = role === "all" ? undefined : role;
       const res = await api.getAllUsers(filterRole);
@@ -41,13 +41,15 @@ export function UserManagement() {
     } catch (err) {
       console.error("Failed to load users", err);
     } finally {
-      setLoading(false);
+      if (showLoader) setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    loadUsers(activeTab);
-  }, [activeTab]);
+    loadUsers(activeTab, true);
+    const interval = setInterval(() => loadUsers(activeTab, false), 20000);
+    return () => clearInterval(interval);
+  }, [activeTab, loadUsers]);
 
   const handleSuspend = async () => {
     if (!suspendModal || !suspendReason.trim()) return;
@@ -58,6 +60,7 @@ export function UserManagement() {
         setUsers(prev =>
           prev.map(u => u._id === suspendModal.userId ? { ...u, isSuspended: true } : u)
         );
+        loadUsers(activeTab, false);
         setSuspendModal(null);
         setSuspendReason("");
       }
@@ -76,6 +79,7 @@ export function UserManagement() {
         setUsers(prev =>
           prev.map(u => u._id === userId ? { ...u, isSuspended: false } : u)
         );
+        loadUsers(activeTab, false);
       }
     } catch (err) {
       console.error("Failed to unsuspend", err);
@@ -181,7 +185,7 @@ export function UserManagement() {
                           <span className="font-medium text-slate-800">{user.name}</span>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-sm text-slate-600">@{user.userId || "—"}</td>
+                      <td className="px-6 py-4 text-sm text-slate-600">@{user.userId || "-"}</td>
                       <td className="px-6 py-4 text-sm text-slate-600">{user.email}</td>
                       <td className="px-6 py-4">
                         <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${getRoleBadge(user.role)}`}>

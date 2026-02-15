@@ -166,6 +166,17 @@ export async function getExamResults(examId: string) {
   return handleResponse(res);
 }
 
+export async function getStudentExamSessionStatus(sessionId: string) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/student/exam/session/${sessionId}/status`, {
+    headers,
+  });
+  return handleResponse(res);
+}
+
 export async function logViolation(
   sessionId: string,
   type: string,
@@ -268,9 +279,7 @@ export async function takeExaminerSubmissionAction(
     | "CHAT"
     | "PAUSE"
     | "TERMINATE"
-    | "MARK_FALSE_POSITIVE"
-    | "ESCALATE"
-    | "RESOLVE",
+    | "MARK_FALSE_POSITIVE",
   note?: string,
 ) {
   const headers: Record<string, string> = {

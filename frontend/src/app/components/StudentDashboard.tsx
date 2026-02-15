@@ -8,7 +8,7 @@ import {
   ArrowRight,
   Loader,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../lib/AuthContext";
 import * as api from "../../lib/api";
@@ -20,32 +20,48 @@ export function StudentDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    async function load() {
+  const loadDashboard = useCallback(
+    async (showLoader = false) => {
+      if (!user?.id) return;
+      if (showLoader) setLoading(true);
+
       try {
-        setLoading(true);
-        // Use getStudentDashboard endpoint instead of just getExams
-        const res = await api.getStudentDashboard(user?.id || ""); 
+        const res = await api.getStudentDashboard(user.id);
         if (res?.success) {
-          console.log("[Dashboard] Loaded data:", res.data);
           setDashboardData(res.data);
+          setError("");
         } else {
-          console.error("[Dashboard] Failed:", res?.message);
           setError(res?.message || "Failed to load dashboard");
         }
       } catch (err) {
-        // Fallback to simpler loading if dashboard fails or user ID missing
-        console.error("Dashboard load failed, finding exams only:", err);
-         const res = await api.getExams();
-         if (res?.success) {
-            setDashboardData({ upcomingExams: res.data, completedExams: [], stats: { completed: 0, averageScore: 0 } });
-         }
+        console.error("Dashboard load failed, falling back to exams list:", err);
+        try {
+          const res = await api.getExams();
+          if (res?.success) {
+            setDashboardData({
+              upcomingExams: res.data,
+              completedExams: [],
+              stats: { completed: 0, averageScore: 0 },
+            });
+            setError("");
+          }
+        } catch (fallbackErr) {
+          console.error("Fallback exams load failed:", fallbackErr);
+          setError("Failed to load dashboard");
+        }
       } finally {
-        setLoading(false);
+        if (showLoader) setLoading(false);
       }
-    }
-    if (user?.id) load();
-  }, [user]);
+    },
+    [user?.id],
+  );
+
+  useEffect(() => {
+    if (!user?.id) return;
+    loadDashboard(true);
+    const interval = setInterval(() => loadDashboard(false), 30000);
+    return () => clearInterval(interval);
+  }, [user?.id, loadDashboard]);
 
   const handleStartExam = (examId: string) => {
     // navigate(`/exam/${examId}/check`); // Old route?
@@ -218,7 +234,7 @@ export function StudentDashboard() {
                             {exam.title}
                           </div>
                           <div className="text-xs text-slate-500">
-                            {exam.duration} mins • {exam.questions?.length || 0}{" "}
+                            {exam.duration} mins - {exam.questions?.length || 0}{" "}
                             questions
                           </div>
                         </button>
