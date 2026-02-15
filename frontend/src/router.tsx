@@ -19,6 +19,7 @@ import { AdminMonitor } from "./app/components/AdminMonitor";
 import { IntegrityReport } from "./app/components/IntegrityReport";
 import { UserManagement } from "./app/components/UserManagement";
 import { CreateExam } from "./app/components/CreateExam";
+import { ExaminerDashboard } from "./app/components/ExaminerDashboard";
 import { MainLayout } from "./app/MainLayout";
 
 // Protected route wrapper - redirects to login if not authenticated
@@ -60,7 +61,27 @@ function PublicRoute() {
   const { user } = useAuth();
 
   if (user) {
+    if (user.role === 'examiner') {
+      return <Navigate to="/examiner" replace />;
+    }
+    if (user.role === 'admin') {
+      return <Navigate to="/admin" replace />; 
+    }
     return <Navigate to="/dashboard" replace />;
+  }
+
+  return <Outlet />;
+}
+
+// Student route wrapper
+function StudentRoute() {
+  const { user } = useAuth();
+
+  if (!user || user.role !== "student") {
+    // If examiner/admin tries to access student routes, redirect to their dashboards
+    if (user?.role === "examiner") return <Navigate to="/examiner" replace />;
+    if (user?.role === "admin") return <Navigate to="/admin" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return <Outlet />;
@@ -78,14 +99,20 @@ export function AppRouter() {
         {/* Protected routes with main layout */}
         <Route element={<ProtectedRoute />}>
           <Route element={<MainLayout />}>
-            <Route path="/dashboard" element={<StudentDashboard />} />
-            <Route path="/available-exams" element={<UpcomingExams />} />
-            <Route path="/exam-history" element={<ExamHistory />} />
-            <Route path="/pre-exam-check" element={<SystemCheck />} />
-            <Route path="/exam/:examId/check" element={<PreExamCheck />} />
+            {/* Student Routes */}
+            <Route element={<StudentRoute />}>
+                <Route path="/dashboard" element={<StudentDashboard />} />
+                <Route path="/available-exams" element={<UpcomingExams />} />
+                <Route path="/exam-history" element={<ExamHistory />} />
+                <Route path="/pre-exam-check" element={<SystemCheck />} />
+                <Route path="/exam/:examId/check" element={<PreExamCheck />} />
+            </Route>
 
             {/* Examiner/Admin routes */}
             <Route element={<ExaminerRoute />}>
+              <Route path="/examiner" element={<ExaminerDashboard />} />
+              <Route path="/examiner/monitor" element={<AdminMonitor />} />
+              <Route path="/examiner/reports" element={<IntegrityReport />} />
               <Route path="/exam/create" element={<CreateExam />} />
             </Route>
 
@@ -98,8 +125,10 @@ export function AppRouter() {
             </Route>
           </Route>
 
-          {/* Active Exam - No Layout */}
-          <Route path="/exam/:examId" element={<ActiveExam />} />
+          {/* Active Exam - No Layout - Student Only */}
+          <Route element={<StudentRoute />}>
+            <Route path="/exam/:examId" element={<ActiveExam />} />
+          </Route>
         </Route>
 
         {/* 404 fallback */}

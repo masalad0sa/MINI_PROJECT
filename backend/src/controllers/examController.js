@@ -2,11 +2,11 @@ import Exam from "../models/Exam.js";
 
 export const createExam = async (req, res) => {
   try {
-    const { title, description, duration, passingScore, questions } = req.body;
+    const { title, description, duration, passingScore, questions, settings, scheduledStart, scheduledEnd } = req.body;
     const createdBy = req.user?.id || req.body.createdBy;
 
     // Validation
-    if (!title || !duration || passingScore === undefined) {
+    if (!title || !duration || passingScore === undefined || !scheduledStart || !scheduledEnd) {
       return res
         .status(400)
         .json({ message: "Please provide all required fields" });
@@ -21,6 +21,9 @@ export const createExam = async (req, res) => {
       createdBy,
       totalQuestions: questions?.length || 0,
       isPublished: true,
+      settings: settings || {},
+      scheduledStart,
+      scheduledEnd,
     });
 
     res.status(201).json({
@@ -52,6 +55,68 @@ export const getExams = async (req, res) => {
       .status(500)
       .json({ message: "Failed to fetch exams", error: error.message });
   }
+};
+
+export const getExamsByCreator = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const exams = await Exam.find({ createdBy: userId }).sort({ createdAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      message: "Exams fetched successfully",
+      data: exams,
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to fetch your exams", error: error.message });
+  }
+};
+
+export const getExaminerStats = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const exams = await Exam.find({ createdBy: userId }).select("_id");
+        const examIds = exams.map(e => e._id);
+        
+        // Import Submission (dynamic import to avoid circular dependency issues if any, or just standard import at top)
+        // Assuming Submission is imported at the top.
+
+        const stats = await import("../models/Submission.js").then(async ({ default: Submission }) => {
+            const totalStudents = await Submission.distinct("studentId", { examId: { $in: examIds } });
+            
+            const activeSessions = await Submission.countDocuments({ 
+                examId: { $in: examIds }, 
+                status: { $in: ["started", "in-progress"] } 
+            });
+
+            const pendingReviews = await Submission.countDocuments({
+                examId: { $in: examIds },
+                $or: [{ isSuspicious: true }, { status: "submitted" }] 
+            });
+
+            const result = await Submission.aggregate([
+                { $match: { examId: { $in: examIds }, status: { $in: ["graded", "auto-submitted"] } } },
+                { $group: { _id: null, avgScore: { $avg: "$score" } } }
+            ]);
+
+            return {
+                totalStudents: totalStudents.length,
+                activeStudents: activeSessions,
+                pendingReviews,
+                averageScore: result[0]?.avgScore || 0
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            data: stats
+        });
+
+    } catch (error) {
+        res.status(500).json({ message: "Failed to fetch stats", error: error.message });
+    }
 };
 
 export const getExamById = async (req, res) => {

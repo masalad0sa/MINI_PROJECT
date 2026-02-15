@@ -53,6 +53,11 @@ export const getStudentDashboard = async (req, res) => {
 
 export const startExam = async (req, res) => {
   try {
+    // Check if user is a student
+    if (req.user.role !== "student") {
+        return res.status(403).json({ message: "Only students can take exams" });
+    }
+
     const { examId } = req.params;
     const studentId = req.user?.id || req.body.studentId;
     console.log(`[StartExam] Student: ${studentId}, Exam: ${examId}`);

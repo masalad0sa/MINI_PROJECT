@@ -49,6 +49,7 @@ export function MainLayout() {
     ];
 
     const examinerItems: NavItem[] = [
+      { path: "/examiner", name: "Dashboard", icon: LayoutDashboard },
       { path: "/exam/create", name: "Create Exam", icon: PlusCircle },
     ];
 
@@ -63,9 +64,9 @@ export function MainLayout() {
     if (user?.role === "admin" || user?.role === "moderator") {
       return [...studentItems, ...examinerItems, ...adminItems];
     }
-    // Examiners see dashboard + create exam
+    // Examiners see examiner dashboard + create exam
     if (user?.role === "examiner") {
-      return [...studentItems, ...examinerItems];
+      return examinerItems;
     }
     // Students see dashboard + system check
     return studentItems;

@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   CheckCircle,
   AlertCircle,
@@ -14,8 +15,11 @@ import {
 import * as api from "../../lib/api";
 
 export function IntegrityReport() {
+  const [searchParams] = useSearchParams();
+  const initialExamId = searchParams.get("examId") || "";
+  
   const [exams, setExams] = useState<any[]>([]);
-  const [selectedExamId, setSelectedExamId] = useState("");
+  const [selectedExamId, setSelectedExamId] = useState(initialExamId);
   const [reportData, setReportData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);

@@ -184,84 +184,106 @@ export function StudentDashboard() {
             )}
           </div>
 
-          {/* Dynamic Available Exams */}
-          <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
-            <div className="bg-gradient-to-br from-purple-500 to-purple-600 p-4">
-              <h2 className="text-white font-semibold text-lg flex items-center gap-2">
-                <Calendar className="w-5 h-5" />
-                Available Exams
-              </h2>
-            </div>
-            <div className="p-6">
-              {upcomingExams.length === 0 ? (
-                <p className="text-slate-600 text-sm">
-                  No exams available at this time.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {upcomingExams.slice(0, 3).map((exam: any) => (
-                    <button
-                      key={exam._id}
-                      onClick={() => handleStartExam(exam._id)}
-                      className="w-full p-3 border border-slate-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
-                    >
-                      <div className="font-semibold text-slate-800 group-hover:text-blue-600 transition-colors">
-                        {exam.title}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {exam.duration} mins • {exam.questions?.length || 0}{" "}
-                        questions
-                      </div>
-                    </button>
-                  ))}
+        {/* Dynamic Available Exams */}
+          {(() => {
+            const now = new Date();
+            const availableExams = upcomingExams.filter((exam: any) => {
+              const start = new Date(exam.scheduledStart);
+              const end = new Date(exam.scheduledEnd);
+              return now >= start && now <= end;
+            });
+
+            return (
+              <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
+                <div className="bg-gradient-to-br from-purple-500 to-purple-600 p-4">
+                  <h2 className="text-white font-semibold text-lg flex items-center gap-2">
+                    <Calendar className="w-5 h-5" />
+                    Available Exams
+                  </h2>
                 </div>
-              )}
-            </div>
-          </div>
+                <div className="p-6">
+                  {availableExams.length === 0 ? (
+                    <p className="text-slate-600 text-sm">
+                      No exams available at this time.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {availableExams.slice(0, 3).map((exam: any) => (
+                        <button
+                          key={exam._id}
+                          onClick={() => handleStartExam(exam._id)}
+                          className="w-full p-3 border border-slate-200 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-all text-left group"
+                        >
+                          <div className="font-semibold text-slate-800 group-hover:text-blue-600 transition-colors">
+                            {exam.title}
+                          </div>
+                          <div className="text-xs text-slate-500">
+                            {exam.duration} mins • {exam.questions?.length || 0}{" "}
+                            questions
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
-        {/* Full Exams List */}
-        {upcomingExams.length > 0 && (
-          <div className="mt-8 bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
-            <div className="bg-white border-b border-slate-200 p-6">
-              <h3 className="text-xl font-bold text-slate-800">
-                All Available Exams
-              </h3>
-            </div>
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {upcomingExams.map((exam: any) => (
-                  <div
-                    key={exam._id}
-                    className="border border-slate-200 rounded-lg p-6 hover:shadow-lg hover:border-blue-500 transition-all group cursor-pointer"
-                    onClick={() => handleStartExam(exam._id)}
-                  >
-                    <h4 className="font-bold text-slate-800 mb-2 group-hover:text-blue-600 transition-colors">
-                      {exam.title}
-                    </h4>
-                    <p className="text-sm text-slate-600 mb-4">
-                      {exam.description || "No description"}
-                    </p>
-                    <div className="space-y-2 mb-4 text-sm text-slate-600">
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4" />
-                        <span>{exam.duration} minutes</span>
+        {/* Full Exams List - Filtered */}
+          {(() => {
+            const now = new Date();
+            const availableExams = upcomingExams.filter((exam: any) => {
+              const start = new Date(exam.scheduledStart);
+              const end = new Date(exam.scheduledEnd);
+              return now >= start && now <= end;
+            });
+
+            if (availableExams.length === 0) return null;
+
+            return (
+              <div className="mt-8 bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
+                <div className="bg-white border-b border-slate-200 p-6">
+                  <h3 className="text-xl font-bold text-slate-800">
+                    All Available Exams
+                  </h3>
+                </div>
+                <div className="p-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {availableExams.map((exam: any) => (
+                      <div
+                        key={exam._id}
+                        className="border border-slate-200 rounded-lg p-6 hover:shadow-lg hover:border-blue-500 transition-all group cursor-pointer"
+                        onClick={() => handleStartExam(exam._id)}
+                      >
+                        <h4 className="font-bold text-slate-800 mb-2 group-hover:text-blue-600 transition-colors">
+                          {exam.title}
+                        </h4>
+                        <p className="text-sm text-slate-600 mb-4">
+                          {exam.description || "No description"}
+                        </p>
+                        <div className="space-y-2 mb-4 text-sm text-slate-600">
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4" />
+                            <span>{exam.duration} minutes</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <AlertCircle className="w-4 h-4" />
+                            <span>Questions: {exam.questions?.length || 0}</span>
+                          </div>
+                        </div>
+                        <button className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 text-sm group-hover:shadow-md">
+                          <span>Start Exam </span>
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Questions: {exam.questions?.length || 0}</span>
-                      </div>
-                    </div>
-                    <button className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-semibold transition-colors flex items-center justify-center gap-2 text-sm group-hover:shadow-md">
-                      <span>Start Exam</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </button>
+                    ))}
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
-          </div>
-        )}
+            );
+          })()}
 
         {/* Notices Card */}
         <div className="mt-8 bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">

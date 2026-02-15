@@ -2,6 +2,8 @@ import express from "express";
 import {
   createExam,
   getExams,
+  getExamsByCreator,
+  getExaminerStats,
   getExamById,
   updateExam,
   deleteExam,
@@ -12,6 +14,8 @@ import { requireExaminer } from "../middleware/authorize.js";
 const router = express.Router();
 
 // GET routes - accessible to all authenticated users
+router.get("/my-exams", protect, requireExaminer, getExamsByCreator);
+router.get("/stats", protect, requireExaminer, getExaminerStats);
 router.get("/", protect, getExams);
 router.get("/:id", protect, getExamById);
 

@@ -64,19 +64,7 @@ export function UpcomingExams() {
     });
   };
 
-  const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-    });
-  };
-
-  const formatTime = (dateStr: string) => {
-    return new Date(dateStr).toLocaleTimeString("en-US", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
+  // Helpers removed as formatDateTime is used in renderExamList
 
   const getExamStatus = (exam: UpcomingExam) => {
     const start = new Date(exam.scheduledStart);
@@ -118,6 +106,9 @@ export function UpcomingExams() {
     navigate(`/exam/${examId}/check`);
   };
 
+  // Tab selection state
+  const [activeTab, setActiveTab] = useState<'available' | 'upcoming' | 'expired'>('available');
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center min-h-[400px]">
@@ -130,8 +121,94 @@ export function UpcomingExams() {
   const upcomingExamsFiltered = exams.filter((e) => getExamStatus(e).status === "upcoming");
   const expiredExams = exams.filter((e) => getExamStatus(e).status === "expired");
 
+  const renderExamList = (list: UpcomingExam[], type: 'available' | 'upcoming' | 'expired') => {
+    if (list.length === 0) {
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center">
+          <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4">
+             {type === 'available' ? <CheckCircle className="w-8 h-8 text-slate-400" /> :
+              type === 'upcoming' ? <Clock className="w-8 h-8 text-slate-400" /> :
+              <AlertCircle className="w-8 h-8 text-slate-400" />}
+          </div>
+          <h3 className="text-xl font-semibold text-slate-600 mb-2">
+            No {type === 'available' ? 'Available' : type === 'upcoming' ? 'Upcoming' : 'Expired'} Exams
+          </h3>
+          <p className="text-slate-500">
+            {type === 'available' ? 'Check back later for new exams.' :
+             type === 'upcoming' ? 'No future exams scheduled yet.' :
+             'You haven\'t missed any exams recently.'}
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid gap-4">
+        {list.map((exam) => {
+          const status = getExamStatus(exam);
+          return (
+            <div
+              key={exam._id}
+              className={`bg-white rounded-xl shadow-sm border p-6 transition-all hover:shadow-md ${
+                type === 'available' ? 'border-green-200 border-l-4 border-l-green-500' :
+                type === 'upcoming' ? 'border-slate-200 border-l-4 border-l-blue-500' :
+                'border-slate-200 border-l-4 border-l-red-400 opacity-75'
+              }`}
+            >
+               <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <h3 className="text-xl font-bold text-slate-800">
+                        {exam.title}
+                      </h3>
+                      <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.color}`}>
+                        {status.label}
+                      </span>
+                    </div>
+                    {exam.description && (
+                      <p className="text-slate-600 mb-4">{exam.description}</p>
+                    )}
+                    <div className="flex flex-wrap gap-4 text-sm text-slate-500">
+                      <span className="flex items-center gap-1">
+                        <Timer className="w-4 h-4" />
+                        {exam.duration} min
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <BookOpen className="w-4 h-4" />
+                        {exam.totalQuestions || "?"} questions
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Users className="w-4 h-4" />
+                        Pass: {exam.passingScore}%
+                      </span>
+                    </div>
+                    <div className="mt-4 flex items-center gap-2 text-sm bg-slate-50 p-2 rounded w-fit">
+                      <Clock className="w-4 h-4 text-slate-400" />
+                      <span className="text-slate-600 font-mono">
+                         {formatDateTime(exam.scheduledStart)} - {formatDateTime(exam.scheduledEnd)}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  {type === 'available' && (
+                    <button
+                      onClick={() => handleStartExam(exam._id)}
+                      className="ml-4 flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors shadow-sm hover:shadow"
+                    >
+                      <Play className="w-5 h-5" />
+                      Start Exam
+                    </button>
+                  )}
+               </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
-    <div className="p-8">
+    <div className="p-8 min-h-screen bg-slate-50">
       <div className="max-w-5xl mx-auto">
         {/* Header */}
         <div className="mb-8">
@@ -152,167 +229,66 @@ export function UpcomingExams() {
           </div>
         )}
 
-        {/* Available Now */}
-        {availableExams.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
-              <CheckCircle className="w-5 h-5 text-green-600" />
-              Available Now ({availableExams.length})
-            </h2>
-            <div className="grid gap-4">
-              {availableExams.map((exam) => {
-                const status = getExamStatus(exam);
-                return (
-                  <div
-                    key={exam._id}
-                    className="bg-white rounded-xl shadow-md border-2 border-green-200 p-6 hover:shadow-lg transition-shadow"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-xl font-bold text-slate-800">
-                            {exam.title}
-                          </h3>
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.color}`}>
-                            {status.label}
-                          </span>
-                        </div>
-                        {exam.description && (
-                          <p className="text-slate-600 mb-4">{exam.description}</p>
-                        )}
-                        <div className="flex flex-wrap gap-4 text-sm text-slate-500">
-                          <span className="flex items-center gap-1">
-                            <Timer className="w-4 h-4" />
-                            {exam.duration} min
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <BookOpen className="w-4 h-4" />
-                            {exam.totalQuestions || "?"} questions
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Users className="w-4 h-4" />
-                            Pass: {exam.passingScore}%
-                          </span>
-                        </div>
-                        <div className="mt-3 flex items-center gap-2 text-sm">
-                          <Clock className="w-4 h-4 text-slate-400" />
-                          <span className="text-slate-500">
-                            Window: {formatTime(exam.scheduledStart)} - {formatTime(exam.scheduledEnd)} ({formatDate(exam.scheduledStart)})
-                          </span>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => handleStartExam(exam._id)}
-                        className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 font-semibold transition-colors"
-                      >
-                        <Play className="w-5 h-5" />
-                        Start Exam
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {/* Tabs */}
+        <div className="flex items-center gap-2 mb-8 bg-white p-1 rounded-xl shadow-sm border border-slate-200 w-fit">
+          <button
+            onClick={() => setActiveTab('available')}
+            className={`px-6 py-2.5 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${
+              activeTab === 'available'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+            }`}
+          >
+            <CheckCircle className="w-4 h-4" />
+            Available Now
+            <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] ${
+              activeTab === 'available' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+            }`}>
+              {availableExams.length}
+            </span>
+          </button>
+          
+          <button
+            onClick={() => setActiveTab('upcoming')}
+            className={`px-6 py-2.5 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${
+              activeTab === 'upcoming'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+            }`}
+          >
+            <Clock className="w-4 h-4" />
+            Upcoming
+            <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] ${
+              activeTab === 'upcoming' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+            }`}>
+              {upcomingExamsFiltered.length}
+            </span>
+          </button>
 
-        {/* Upcoming */}
-        {upcomingExamsFiltered.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
-              <Clock className="w-5 h-5 text-blue-600" />
-              Scheduled ({upcomingExamsFiltered.length})
-            </h2>
-            <div className="grid gap-4">
-              {upcomingExamsFiltered.map((exam) => {
-                const status = getExamStatus(exam);
-                return (
-                  <div
-                    key={exam._id}
-                    className="bg-white rounded-xl shadow-md border border-slate-200 p-6"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-3 mb-2">
-                          <h3 className="text-lg font-semibold text-slate-800">
-                            {exam.title}
-                          </h3>
-                          <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.color}`}>
-                            {status.label}
-                          </span>
-                        </div>
-                        {exam.description && (
-                          <p className="text-slate-500 text-sm mb-3">{exam.description}</p>
-                        )}
-                        <div className="flex flex-wrap gap-4 text-sm text-slate-500">
-                          <span className="flex items-center gap-1">
-                            <Timer className="w-4 h-4" />
-                            {exam.duration} min
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <BookOpen className="w-4 h-4" />
-                            {exam.totalQuestions || "?"} questions
-                          </span>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-sm text-slate-500 mb-1">Opens at</div>
-                        <div className="font-semibold text-slate-800">
-                          {formatDateTime(exam.scheduledStart)}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+          <button
+            onClick={() => setActiveTab('expired')}
+            className={`px-6 py-2.5 rounded-lg font-medium text-sm transition-all flex items-center gap-2 ${
+              activeTab === 'expired'
+                ? 'bg-blue-600 text-white shadow-sm'
+                : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+            }`}
+          >
+            <AlertCircle className="w-4 h-4" />
+            Expired
+             <span className={`ml-1 px-1.5 py-0.5 rounded-full text-[10px] ${
+              activeTab === 'expired' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+            }`}>
+              {expiredExams.length}
+            </span>
+          </button>
+        </div>
 
-        {/* Expired */}
-        {expiredExams.length > 0 && (
-          <div>
-            <h2 className="text-lg font-semibold text-slate-700 mb-4 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5 text-red-600" />
-              Expired ({expiredExams.length})
-            </h2>
-            <div className="grid gap-4">
-              {expiredExams.map((exam) => (
-                <div
-                  key={exam._id}
-                  className="bg-slate-50 rounded-xl border border-slate-200 p-6 opacity-60"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-lg font-semibold text-slate-600">
-                        {exam.title}
-                      </h3>
-                      <p className="text-sm text-slate-400 mt-1">
-                        Closed on {formatDateTime(exam.scheduledEnd)}
-                      </p>
-                    </div>
-                    <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs font-medium">
-                      Expired
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Empty State */}
-        {exams.length === 0 && !loading && (
-          <div className="bg-white rounded-xl shadow-md p-12 text-center">
-            <Calendar className="w-16 h-16 text-slate-300 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-slate-600 mb-2">
-              No Exams Scheduled
-            </h3>
-            <p className="text-slate-500">
-              Check back later for upcoming exams
-            </p>
-          </div>
-        )}
+        {/* Tab Content */}
+        <div>
+          {activeTab === 'available' && renderExamList(availableExams, 'available')}
+          {activeTab === 'upcoming' && renderExamList(upcomingExamsFiltered, 'upcoming')}
+          {activeTab === 'expired' && renderExamList(expiredExams, 'expired')}
+        </div>
       </div>
     </div>
   );

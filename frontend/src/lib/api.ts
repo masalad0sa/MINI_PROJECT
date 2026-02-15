@@ -77,6 +77,24 @@ export async function getExams() {
   return handleResponse(res);
 }
 
+export async function getMyExams() {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/exam/my-exams`, { headers });
+  return handleResponse(res);
+}
+
+export async function getExaminerStats() {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/exam/stats`, { headers });
+  return handleResponse(res);
+}
+
 export async function getExamById(id: string) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
