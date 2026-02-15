@@ -1,5 +1,4 @@
-import Submission from "../models/Submission.js";
-import Exam from "../models/Exam.js";
+import { Submission, Exam } from "../models/student.js";
 // Note: User import removed - was unused
 
 export const getStudentDashboard = async (req, res) => {
@@ -232,7 +231,7 @@ export const getExamResults = async (req, res) => {
 // Log a security violation during exam
 export const logViolation = async (req, res) => {
   try {
-    const { sessionId, type, severity, description } = req.body;
+    const { sessionId, type, severity, description, evidence } = req.body;
     const studentId = req.user?.id;
 
     // Find the submission
@@ -251,6 +250,7 @@ export const logViolation = async (req, res) => {
       type,
       severity,
       description: description || `${type} violation detected`,
+      evidence: evidence || "",
       timestamp: new Date(),
     });
     submission.violationCount = submission.violations.length;

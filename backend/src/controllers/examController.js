@@ -1,4 +1,5 @@
 import Exam from "../models/Exam.js";
+import { Submission } from "../models/examiner.js";
 
 export const createExam = async (req, res) => {
   try {
@@ -79,35 +80,37 @@ export const getExaminerStats = async (req, res) => {
         const userId = req.user.id;
         const exams = await Exam.find({ createdBy: userId }).select("_id");
         const examIds = exams.map(e => e._id);
-        
-        // Import Submission (dynamic import to avoid circular dependency issues if any, or just standard import at top)
-        // Assuming Submission is imported at the top.
 
-        const stats = await import("../models/Submission.js").then(async ({ default: Submission }) => {
-            const totalStudents = await Submission.distinct("studentId", { examId: { $in: examIds } });
-            
-            const activeSessions = await Submission.countDocuments({ 
-                examId: { $in: examIds }, 
-                status: { $in: ["started", "in-progress"] } 
-            });
-
-            const pendingReviews = await Submission.countDocuments({
-                examId: { $in: examIds },
-                $or: [{ isSuspicious: true }, { status: "submitted" }] 
-            });
-
-            const result = await Submission.aggregate([
-                { $match: { examId: { $in: examIds }, status: { $in: ["graded", "auto-submitted"] } } },
-                { $group: { _id: null, avgScore: { $avg: "$score" } } }
-            ]);
-
-            return {
-                totalStudents: totalStudents.length,
-                activeStudents: activeSessions,
-                pendingReviews,
-                averageScore: result[0]?.avgScore || 0
-            };
+        const totalStudents = await Submission.distinct("studentId", {
+          examId: { $in: examIds },
         });
+
+        const activeSessions = await Submission.countDocuments({
+          examId: { $in: examIds },
+          status: { $in: ["started", "in-progress"] },
+        });
+
+        const pendingReviews = await Submission.countDocuments({
+          examId: { $in: examIds },
+          $or: [{ isSuspicious: true }, { status: "submitted" }],
+        });
+
+        const result = await Submission.aggregate([
+          {
+            $match: {
+              examId: { $in: examIds },
+              status: { $in: ["graded", "auto-submitted"] },
+            },
+          },
+          { $group: { _id: null, avgScore: { $avg: "$score" } } },
+        ]);
+
+        const stats = {
+          totalStudents: totalStudents.length,
+          activeStudents: activeSessions,
+          pendingReviews,
+          averageScore: result[0]?.avgScore || 0,
+        };
 
         res.status(200).json({
             success: true,

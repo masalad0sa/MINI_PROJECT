@@ -1,16 +1,20 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   User,
   AlertTriangle,
   CheckCircle,
   Clock,
-  Send,
-  Ban,
+  XCircle,
+  Flag,
+  ShieldCheck,
+  ShieldAlert,
+  MessageSquareWarning,
   Camera,
   Loader,
   RefreshCw,
   Monitor,
+  ExternalLink,
 } from "lucide-react";
 import * as api from "../../lib/api";
 
@@ -21,9 +25,12 @@ export function AdminMonitor() {
   const [exams, setExams] = useState<any[]>([]);
   const [selectedExamId, setSelectedExamId] = useState(initialExamId);
   const [monitorData, setMonitorData] = useState<any>(null);
-  const [selectedStudentIdx, setSelectedStudentIdx] = useState(0);
+  const [selectedStudentId, setSelectedStudentId] = useState<string>("");
+  const [riskFilter, setRiskFilter] = useState<"ALL" | "HIGH" | "MEDIUM" | "LOW">("ALL");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [actionMessage, setActionMessage] = useState<string>("");
 
   // Load available exams
   useEffect(() => {
@@ -51,9 +58,16 @@ export function AdminMonitor() {
     if (!selectedExamId) return;
     setRefreshing(true);
     try {
-      const res = await api.monitorExam(selectedExamId);
+      const res = await api.getExaminerMonitor(selectedExamId);
       if (res.success) {
         setMonitorData(res.data);
+        setSelectedStudentId((prev) => {
+          if (!prev) return res.data?.students?.[0]?.submissionId || "";
+          const stillExists = (res.data?.students || []).some(
+            (student: any) => student.submissionId === prev,
+          );
+          return stillExists ? prev : res.data?.students?.[0]?.submissionId || "";
+        });
       }
     } catch (err) {
       console.error("Failed to load monitor data", err);
@@ -72,7 +86,23 @@ export function AdminMonitor() {
   const students = monitorData?.students || [];
   const violations = monitorData?.violations || [];
   const summary = monitorData?.summary || {};
-  const selected = students[selectedStudentIdx];
+  const selected =
+    students.find((student: any) => student.submissionId === selectedStudentId) ||
+    students[0] ||
+    null;
+
+  const queueRankMap = useMemo(() => {
+    const rankMap = new Map<string, number>();
+    (monitorData?.riskQueue || []).forEach((queueItem: any, idx: number) => {
+      rankMap.set(queueItem.submissionId, queueItem.rank || idx + 1);
+    });
+    return rankMap;
+  }, [monitorData?.riskQueue]);
+
+  const filteredStudents =
+    riskFilter === "ALL"
+      ? students
+      : students.filter((student: any) => student.riskLevel === riskFilter);
 
   const getStatusIcon = (status: string) => {
     const s = status?.toLowerCase();
@@ -85,10 +115,23 @@ export function AdminMonitor() {
     return <div className="w-2 h-2 rounded-full bg-slate-400" />;
   };
 
-  const getStudentCardColor = (student: any) => {
-    if (student.isSuspicious) return "bg-red-50 border-red-200";
-    if (student.warningCount > 0) return "bg-amber-50 border-amber-200";
-    return "bg-green-50 border-green-200";
+  const getRiskBadge = (riskLevel: string) => {
+    if (riskLevel === "HIGH") return "bg-red-100 text-red-700 border-red-200";
+    if (riskLevel === "MEDIUM") return "bg-amber-100 text-amber-700 border-amber-200";
+    return "bg-green-100 text-green-700 border-green-200";
+  };
+
+  const getReviewStatusBadge = (reviewStatus: string) => {
+    switch (reviewStatus) {
+      case "ESCALATED":
+        return "bg-red-100 text-red-700 border-red-200";
+      case "UNDER_REVIEW":
+        return "bg-blue-100 text-blue-700 border-blue-200";
+      case "RESOLVED":
+        return "bg-green-100 text-green-700 border-green-200";
+      default:
+        return "bg-slate-100 text-slate-700 border-slate-200";
+    }
   };
 
   const getSeverityColor = (severity: string) => {
@@ -96,6 +139,47 @@ export function AdminMonitor() {
       case "CRITICAL": return "bg-red-100 text-red-700";
       case "MEDIUM": return "bg-amber-100 text-amber-700";
       default: return "bg-blue-100 text-blue-700";
+    }
+  };
+
+  const toReadableLabel = (value: string) => value?.replace(/_/g, " ") || "";
+
+  const performAction = async (
+    actionType:
+      | "WARN"
+      | "CHAT"
+      | "PAUSE"
+      | "TERMINATE"
+      | "MARK_FALSE_POSITIVE"
+      | "ESCALATE"
+      | "RESOLVE",
+  ) => {
+    if (!selected?.submissionId) return;
+
+    const requiresNote = new Set(["WARN", "TERMINATE", "ESCALATE", "MARK_FALSE_POSITIVE"]);
+    const note = requiresNote.has(actionType)
+      ? window.prompt(`Add a note for ${toReadableLabel(actionType).toLowerCase()}:`) || ""
+      : "";
+
+    setActionLoading(actionType);
+    setActionMessage("");
+    try {
+      const res = await api.takeExaminerSubmissionAction(
+        selected.submissionId,
+        actionType,
+        note,
+      );
+      if (res.success) {
+        setActionMessage(`${toReadableLabel(actionType)} recorded for ${selected.studentName}.`);
+        await loadMonitorData();
+      } else {
+        setActionMessage(`Failed to apply ${toReadableLabel(actionType)}.`);
+      }
+    } catch (err) {
+      console.error("Failed to apply submission action", err);
+      setActionMessage(`Failed to apply ${toReadableLabel(actionType)}.`);
+    } finally {
+      setActionLoading(null);
     }
   };
 
@@ -120,8 +204,9 @@ export function AdminMonitor() {
             value={selectedExamId}
             onChange={(e) => {
               setSelectedExamId(e.target.value);
-              setSelectedStudentIdx(0);
+              setSelectedStudentId("");
               setMonitorData(null);
+              setActionMessage("");
             }}
             className="bg-white/20 border border-white/30 text-white rounded-lg px-3 py-1.5 text-sm [&>option]:text-slate-800"
           >
@@ -144,7 +229,8 @@ export function AdminMonitor() {
             <div className="flex items-center gap-3 text-sm">
               <span className="bg-green-500/30 px-2 py-1 rounded">{summary.active} active</span>
               <span className="bg-blue-500/30 px-2 py-1 rounded">{summary.submitted} done</span>
-              <span className="bg-red-500/30 px-2 py-1 rounded">{summary.flagged} flagged</span>
+              <span className="bg-red-500/30 px-2 py-1 rounded">{summary.highRisk || 0} high risk</span>
+              <span className="bg-amber-500/30 px-2 py-1 rounded">{summary.mediumRisk || 0} medium risk</span>
             </div>
           )}
         </div>
@@ -162,38 +248,59 @@ export function AdminMonitor() {
           {/* Left Panel - Student List */}
           <div className="w-[320px] bg-white border-r border-slate-200 overflow-y-auto">
             <div className="p-4 border-b border-slate-200">
-              <h2 className="font-semibold text-slate-800">Students</h2>
-              <p className="text-sm text-slate-500">{students.length} total</p>
+              <h2 className="font-semibold text-slate-800">Live Risk Queue</h2>
+              <p className="text-sm text-slate-500">{students.length} total students</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {(["ALL", "HIGH", "MEDIUM", "LOW"] as const).map((filterValue) => (
+                  <button
+                    key={filterValue}
+                    onClick={() => setRiskFilter(filterValue)}
+                    className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                      riskFilter === filterValue
+                        ? "bg-purple-100 text-purple-700 border-purple-300"
+                        : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                    }`}
+                  >
+                    {filterValue}
+                  </button>
+                ))}
+              </div>
             </div>
             <div className="p-3 space-y-2">
-              {students.length === 0 ? (
+              {filteredStudents.length === 0 ? (
                 <p className="text-slate-400 text-center py-8 text-sm">No students found</p>
               ) : (
-                students.map((student: any, idx: number) => (
+                filteredStudents.map((student: any) => (
                   <button
                     key={student.submissionId}
-                    onClick={() => setSelectedStudentIdx(idx)}
+                    onClick={() => setSelectedStudentId(student.submissionId)}
                     className={`w-full text-left p-3 rounded-lg border-2 transition-all ${
-                      selectedStudentIdx === idx
+                      selectedStudentId === student.submissionId
                         ? "border-purple-500 bg-purple-50 shadow-md"
-                        : `border-transparent ${getStudentCardColor(student)}`
+                        : "border-slate-200 hover:border-purple-300 bg-white"
                     }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-purple-700 bg-purple-100 rounded px-1.5 py-0.5">
+                          #{queueRankMap.get(student.submissionId) || "-"}
+                        </span>
                         <User className="w-4 h-4 text-slate-600" />
                         <span className="font-medium text-slate-800 text-sm">{student.studentName}</span>
                       </div>
                       {getStatusIcon(student.status)}
                     </div>
                     <div className="flex items-center justify-between text-xs text-slate-500">
-                      <span>Progress: {student.progress}%</span>
-                      <span className={student.warningCount > 0 ? "text-amber-600 font-medium" : "text-green-600"}>
+                      <span className={`px-2 py-0.5 rounded-full border ${getRiskBadge(student.riskLevel)}`}>
+                        {student.riskLevel} · {student.riskScore}/100
+                      </span>
+                      <span className="text-slate-600 font-medium">
                         {student.warningCount} warnings
                       </span>
                     </div>
-                    <div className="mt-1.5 bg-slate-200 rounded-full h-1 overflow-hidden">
-                      <div className="bg-purple-500 h-full transition-all" style={{ width: `${student.progress}%` }} />
+                    <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2">
+                      <span>{student.lastAlertAt ? `Last alert ${new Date(student.lastAlertAt).toLocaleTimeString()}` : "No alerts yet"}</span>
+                      <span>{student.evidenceCount || 0} evidence</span>
                     </div>
                   </button>
                 ))
@@ -221,9 +328,9 @@ export function AdminMonitor() {
                           </div>
                         )}
                       </div>
-                      <div className="text-center text-sm text-slate-500 mt-2">{selected.studentName}</div>
+                        <div className="text-center text-sm text-slate-500 mt-2">{selected.studentName}</div>
                     </div>
-                    <div className="space-y-3">
+                    <div className="space-y-2.5">
                       <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
                         <div className="text-xs text-slate-500">Name</div>
                         <div className="font-semibold text-slate-800">{selected.studentName}</div>
@@ -236,25 +343,81 @@ export function AdminMonitor() {
                         <div className="text-xs text-slate-500">Progress</div>
                         <div className="font-semibold text-slate-800">{selected.progress}% Complete</div>
                       </div>
-                      <div className={`rounded-lg p-3 border ${
-                        selected.isSuspicious ? "bg-red-50 border-red-200" :
-                        selected.warningCount > 0 ? "bg-amber-50 border-amber-200" : "bg-green-50 border-green-200"
-                      }`}>
-                        <div className="text-xs text-slate-500">Warnings</div>
-                        <div className="font-semibold">{selected.warningCount} / 3</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="rounded-lg p-3 border bg-slate-50 border-slate-200">
+                          <div className="text-xs text-slate-500">Risk</div>
+                          <div className={`font-semibold inline-flex px-2 py-0.5 mt-1 rounded-full border text-xs ${getRiskBadge(selected.riskLevel)}`}>
+                            {selected.riskLevel} · {selected.riskScore}/100
+                          </div>
+                        </div>
+                        <div className="rounded-lg p-3 border bg-slate-50 border-slate-200">
+                          <div className="text-xs text-slate-500">Review</div>
+                          <div className={`font-semibold inline-flex px-2 py-0.5 mt-1 rounded-full border text-xs ${getReviewStatusBadge(selected.reviewStatus)}`}>
+                            {toReadableLabel(selected.reviewStatus)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="rounded-lg p-3 border bg-slate-50 border-slate-200">
+                        <div className="text-xs text-slate-500">Alerts / Evidence</div>
+                        <div className="font-semibold text-slate-800">
+                          {selected.warningCount} warnings · {selected.evidenceCount || 0} evidence files
+                        </div>
+                      </div>
+                      <div className="rounded-lg p-3 border bg-slate-50 border-slate-200">
+                        <div className="text-xs text-slate-500">Last Alert</div>
+                        <div className="font-semibold text-slate-800">
+                          {selected.lastAlertAt ? new Date(selected.lastAlertAt).toLocaleString() : "N/A"}
+                        </div>
                       </div>
                     </div>
                   </div>
-                  <div className="mt-4 flex gap-3">
-                    <button className="flex-1 flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm">
-                      <Send className="w-4 h-4" />
-                      Send Warning
+                  <div className="mt-4 grid grid-cols-2 md:grid-cols-3 gap-3">
+                    <button
+                      onClick={() => performAction("WARN")}
+                      disabled={!!actionLoading}
+                      className="flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm disabled:opacity-60"
+                    >
+                      <MessageSquareWarning className="w-4 h-4" />
+                      {actionLoading === "WARN" ? "Applying..." : "Warn"}
                     </button>
-                    <button className="flex-1 flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm">
-                      <Ban className="w-4 h-4" />
-                      Terminate Exam
+                    <button
+                      onClick={() => performAction("ESCALATE")}
+                      disabled={!!actionLoading}
+                      className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm disabled:opacity-60"
+                    >
+                      <ShieldAlert className="w-4 h-4" />
+                      {actionLoading === "ESCALATE" ? "Applying..." : "Escalate"}
+                    </button>
+                    <button
+                      onClick={() => performAction("RESOLVE")}
+                      disabled={!!actionLoading}
+                      className="flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm disabled:opacity-60"
+                    >
+                      <ShieldCheck className="w-4 h-4" />
+                      {actionLoading === "RESOLVE" ? "Applying..." : "Resolve"}
+                    </button>
+                    <button
+                      onClick={() => performAction("MARK_FALSE_POSITIVE")}
+                      disabled={!!actionLoading}
+                      className="flex items-center justify-center gap-2 bg-slate-700 hover:bg-slate-800 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm disabled:opacity-60"
+                    >
+                      <Flag className="w-4 h-4" />
+                      {actionLoading === "MARK_FALSE_POSITIVE" ? "Applying..." : "False Positive"}
+                    </button>
+                    <button
+                      onClick={() => performAction("TERMINATE")}
+                      disabled={!!actionLoading}
+                      className="flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-lg font-semibold transition-colors text-sm disabled:opacity-60"
+                    >
+                      <XCircle className="w-4 h-4" />
+                      {actionLoading === "TERMINATE" ? "Applying..." : "Terminate"}
                     </button>
                   </div>
+                  {actionMessage && (
+                    <div className="mt-3 text-sm text-blue-700 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                      {actionMessage}
+                    </div>
+                  )}
                 </div>
 
                 {/* Student's Violations */}
@@ -270,17 +433,66 @@ export function AdminMonitor() {
                             {v.severity}
                           </span>
                           <div className="flex-1">
-                            <div className="text-sm font-medium text-slate-800">{v.type?.replace(/_/g, " ")}</div>
+                            <div className="text-sm font-medium text-slate-800">{toReadableLabel(v.type)}</div>
                             {v.description && <div className="text-xs text-slate-500">{v.description}</div>}
                           </div>
+                          {v.evidence && (
+                            <button
+                              onClick={() => window.open(v.evidence, "_blank")}
+                              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                              title="Open evidence"
+                            >
+                              Evidence
+                              <ExternalLink className="w-3 h-3" />
+                            </button>
+                          )}
                           <div className="text-xs text-slate-400 font-mono">
-                            {v.timestamp ? new Date(v.timestamp).toLocaleTimeString() : ""}
+                            {v.timestamp ? new Date(v.timestamp).toLocaleString() : ""}
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
                 )}
+
+                {/* Examiner Intervention Log */}
+                <div className="bg-white rounded-xl shadow-md border border-slate-200 p-6 mb-6">
+                  <h3 className="text-lg font-semibold text-slate-800 mb-3">
+                    Examiner Actions ({selected.examinerActions?.length || 0})
+                  </h3>
+                  <div className="space-y-2 max-h-[220px] overflow-y-auto">
+                    {(selected.examinerActions || []).length === 0 ? (
+                      <p className="text-slate-400 text-sm">No intervention actions yet</p>
+                    ) : (
+                      [...selected.examinerActions]
+                        .sort(
+                          (a: any, b: any) =>
+                            new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+                        )
+                        .map((action: any, idx: number) => (
+                          <div
+                            key={idx}
+                            className="flex items-start justify-between gap-3 p-3 bg-slate-50 rounded-lg border border-slate-200"
+                          >
+                            <div>
+                              <div className="text-sm font-medium text-slate-800">
+                                {toReadableLabel(action.actionType)}
+                              </div>
+                              <div className="text-xs text-slate-500">
+                                by {action.actorName || "Unknown"}
+                              </div>
+                              {action.note && (
+                                <div className="text-xs text-slate-600 mt-1">{action.note}</div>
+                              )}
+                            </div>
+                            <div className="text-xs text-slate-400 font-mono">
+                              {action.timestamp ? new Date(action.timestamp).toLocaleString() : ""}
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                </div>
               </>
             ) : (
               <div className="flex items-center justify-center h-full text-slate-400">
@@ -308,8 +520,21 @@ export function AdminMonitor() {
                       </div>
                       <div className="flex-1">
                         <div className="font-medium text-slate-800 text-sm">{v.studentName}</div>
-                        <div className="text-xs text-slate-500">{v.type?.replace(/_/g, " ")}</div>
+                        <div className="text-xs text-slate-500">{toReadableLabel(v.type)}</div>
+                        {v.description && (
+                          <div className="text-xs text-slate-500">{v.description}</div>
+                        )}
                       </div>
+                      {v.evidence && (
+                        <button
+                          onClick={() => window.open(v.evidence, "_blank")}
+                          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                          title="Open evidence"
+                        >
+                          Evidence
+                          <ExternalLink className="w-3 h-3" />
+                        </button>
+                      )}
                       <span className={`text-xs px-2 py-1 rounded-full font-medium ${getSeverityColor(v.severity)}`}>
                         {v.severity}
                       </span>

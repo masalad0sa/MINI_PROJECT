@@ -6,6 +6,7 @@ import authRoutes from "./routes/auth.js";
 import studentRoutes from "./routes/student.js";
 import examRoutes from "./routes/exam.js";
 import adminRoutes from "./routes/admin.js";
+import examinerRoutes from "./routes/examiner.js";
 import proctoringRoutes from "./routes/proctoring.js";
 
 dotenv.config();
@@ -37,6 +38,7 @@ app.use("/api/student", studentRoutes);
 
 app.use("/api/exam", examRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/examiner", examinerRoutes);
 app.use("/api/proctoring", proctoringRoutes);
 
 // Health check

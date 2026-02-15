@@ -6,15 +6,15 @@ import {
   startExam,
   logViolation,
 } from "../controllers/studentController.js";
-import { protect } from '../middleware/auth.js';
+import { protectStudent, requireStudentRole } from "../middleware/student.js";
 
 const router = express.Router();
 
-router.get("/dashboard/:id", protect, getStudentDashboard);
-router.post("/exam/start/:examId", protect, startExam);
-router.post("/exam/submit", protect, submitExam);
-router.post("/exam/violation", protect, logViolation);
-router.get("/exam/:examId/results", protect, getExamResults);
+router.get("/dashboard/:id", protectStudent, requireStudentRole, getStudentDashboard);
+router.post("/exam/start/:examId", protectStudent, requireStudentRole, startExam);
+router.post("/exam/submit", protectStudent, requireStudentRole, submitExam);
+router.post("/exam/violation", protectStudent, requireStudentRole, logViolation);
+router.get("/exam/:examId/results", protectStudent, requireStudentRole, getExamResults);
 
 export default router;
 

@@ -36,6 +36,39 @@ const answerSchema = new mongoose.Schema({
   isCorrect: Boolean,
 });
 
+const examinerActionSchema = new mongoose.Schema({
+  actionType: {
+    type: String,
+    enum: [
+      "WARN",
+      "CHAT",
+      "PAUSE",
+      "TERMINATE",
+      "MARK_FALSE_POSITIVE",
+      "ESCALATE",
+      "RESOLVE",
+    ],
+    required: true,
+  },
+  actorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+  },
+  actorName: {
+    type: String,
+    required: true,
+  },
+  note: {
+    type: String,
+    default: "",
+  },
+  timestamp: {
+    type: Date,
+    default: Date.now,
+  },
+});
+
 const submissionSchema = new mongoose.Schema(
   {
     studentId: {
@@ -74,6 +107,13 @@ const submissionSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    reviewStatus: {
+      type: String,
+      enum: ["OPEN", "UNDER_REVIEW", "RESOLVED", "ESCALATED"],
+      default: "OPEN",
+    },
+    examinerActions: [examinerActionSchema],
+    lastInterventionAt: Date,
     startedAt: {
       type: Date,
       default: Date.now,

@@ -48,7 +48,7 @@ export function IntegrityReport() {
   const loadReport = async () => {
     setReportLoading(true);
     try {
-      const res = await api.getAdminIntegrityReport(selectedExamId);
+      const res = await api.getExaminerIntegrityReport(selectedExamId);
       if (res.success) {
         setReportData(res.data);
       }
@@ -70,6 +70,19 @@ export function IntegrityReport() {
       case "CRITICAL": return "bg-red-100 text-red-700";
       case "MEDIUM": return "bg-amber-100 text-amber-700";
       default: return "bg-blue-100 text-blue-700";
+    }
+  };
+
+  const getReviewStatusColor = (status: string) => {
+    switch (status) {
+      case "ESCALATED":
+        return "bg-red-100 text-red-700 border-red-200";
+      case "UNDER_REVIEW":
+        return "bg-blue-100 text-blue-700 border-blue-200";
+      case "RESOLVED":
+        return "bg-green-100 text-green-700 border-green-200";
+      default:
+        return "bg-slate-100 text-slate-700 border-slate-200";
     }
   };
 
@@ -173,11 +186,17 @@ export function IntegrityReport() {
                           <div className="text-lg font-bold text-slate-800">{report.score ?? "N/A"}%</div>
                           <div className="text-xs text-slate-500">Score</div>
                         </div>
+                        <div className={`px-3 py-1 rounded-full text-xs font-medium border ${getReviewStatusColor(report.reviewStatus || "OPEN")}`}>
+                          {(report.reviewStatus || "OPEN").replace(/_/g, " ")}
+                        </div>
                         <div className={`px-3 py-1 rounded-full text-xs font-medium ${suspicion.bg} ${suspicion.color} ${suspicion.border} border`}>
                           {report.suspicionScore}% — {suspicion.label}
                         </div>
                         <div className="text-sm text-slate-500">
                           {report.violationCount} violations
+                        </div>
+                        <div className="text-sm text-slate-500">
+                          {report.examinerActions?.length || 0} actions
                         </div>
                         {isExpanded ? <ChevronUp className="w-5 h-5 text-slate-400" /> : <ChevronDown className="w-5 h-5 text-slate-400" />}
                       </div>

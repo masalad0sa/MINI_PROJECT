@@ -232,32 +232,64 @@ export async function getActiveExamSessions() {
   return handleResponse(res);
 }
 
-export async function monitorExam(examId: string) {
+// ========== Examiner API Functions ==========
+
+export async function getExaminerMonitor(examId: string) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...getAuthHeader(),
   };
-  const res = await fetch(`${API_BASE}/admin/monitor/${examId}`, { headers });
+  const res = await fetch(`${API_BASE}/examiner/monitor/${examId}`, { headers });
   return handleResponse(res);
 }
 
-export async function getAdminIntegrityReport(examId: string) {
+export async function getExaminerIntegrityReport(examId: string) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...getAuthHeader(),
   };
-  const res = await fetch(`${API_BASE}/admin/report/${examId}`, { headers });
+  const res = await fetch(`${API_BASE}/examiner/report/${examId}`, { headers });
   return handleResponse(res);
 }
 
-export async function getSubmissionReport(submissionId: string) {
+export async function getExaminerSubmissionReport(submissionId: string) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...getAuthHeader(),
   };
-  const res = await fetch(`${API_BASE}/admin/submission/${submissionId}`, { headers });
+  const res = await fetch(`${API_BASE}/examiner/submission/${submissionId}`, { headers });
   return handleResponse(res);
 }
+
+export async function takeExaminerSubmissionAction(
+  submissionId: string,
+  actionType:
+    | "WARN"
+    | "CHAT"
+    | "PAUSE"
+    | "TERMINATE"
+    | "MARK_FALSE_POSITIVE"
+    | "ESCALATE"
+    | "RESOLVE",
+  note?: string,
+) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/examiner/submission/${submissionId}/action`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ actionType, note }),
+  });
+  return handleResponse(res);
+}
+
+// Backward-compatible aliases
+export const monitorExam = getExaminerMonitor;
+export const getAdminIntegrityReport = getExaminerIntegrityReport;
+export const getSubmissionReport = getExaminerSubmissionReport;
+export const takeSubmissionAction = takeExaminerSubmissionAction;
 
 export async function getAllUsers(role?: string) {
   const headers: Record<string, string> = {

@@ -71,10 +71,16 @@ npm start
 ### Admin
 
 - `GET /api/admin/dashboard` - Get admin dashboard
-- `GET /api/admin/monitor/:examId` - Monitor exam
-- `GET /api/admin/report/:examId` - Get integrity report
+- `GET /api/admin/active-exams` - Get active exam sessions summary
 - `GET /api/admin/users` - Get all users
 - `POST /api/admin/suspend/:studentId` - Suspend student
+
+### Examiner
+
+- `GET /api/examiner/monitor/:examId` - Live monitoring data and risk queue
+- `GET /api/examiner/report/:examId` - Integrity report for an exam
+- `GET /api/examiner/submission/:submissionId` - Detailed submission report
+- `POST /api/examiner/submission/:submissionId/action` - Record examiner action (`WARN`, `PAUSE`, `CHAT`, `TERMINATE`, `MARK_FALSE_POSITIVE`, `ESCALATE`, `RESOLVE`)
 
 ## Project Structure
 

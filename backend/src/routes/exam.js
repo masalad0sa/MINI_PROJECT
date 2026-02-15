@@ -9,20 +9,20 @@ import {
   deleteExam,
 } from "../controllers/examController.js";
 import { protect } from "../middleware/auth.js";
-import { requireExaminer } from "../middleware/authorize.js";
+import { requireExaminerRole } from "../middleware/examiner.js";
 
 const router = express.Router();
 
 // GET routes - accessible to all authenticated users
-router.get("/my-exams", protect, requireExaminer, getExamsByCreator);
-router.get("/stats", protect, requireExaminer, getExaminerStats);
+router.get("/my-exams", protect, requireExaminerRole, getExamsByCreator);
+router.get("/stats", protect, requireExaminerRole, getExaminerStats);
 router.get("/", protect, getExams);
 router.get("/:id", protect, getExamById);
 
 // Examiner/Admin routes for exam management
-router.post("/", protect, requireExaminer, createExam);
-router.put("/:id", protect, requireExaminer, updateExam);
-router.delete("/:id", protect, requireExaminer, deleteExam);
+router.post("/", protect, requireExaminerRole, createExam);
+router.put("/:id", protect, requireExaminerRole, updateExam);
+router.delete("/:id", protect, requireExaminerRole, deleteExam);
 
 export default router;
 
