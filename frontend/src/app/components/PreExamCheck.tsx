@@ -18,6 +18,7 @@ export function PreExamCheck() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [webcamReady, setWebcamReady] = useState(false);
+  const [faceDetected, setFaceDetected] = useState<boolean | null>(null);
   const [internet, setInternet] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -45,11 +46,21 @@ export function PreExamCheck() {
   }, []);
 
   const checklistItems = [
-    { label: "Webcam", status: webcamReady ? "OK" : "Pending", icon: Camera },
+    {
+      label: "Webcam",
+      status: webcamReady ? "OK" : "Pending",
+      icon: Camera,
+    },
+    {
+      label: "Face Detection",
+      status: !webcamReady ? "Pending" : faceDetected ? "OK" : "Failed",
+      icon: User,
+    },
     { label: "Internet", status: internet ? "OK" : "Failed", icon: Wifi },
   ];
 
   const allChecksPassed = checklistItems.every((item) => item.status === "OK");
+  const completedChecks = checklistItems.filter((item) => item.status === "OK").length;
 
   const getStatusIcon = (status: string) => {
     if (status === "OK")
@@ -78,7 +89,9 @@ export function PreExamCheck() {
     }
   };
 
-  const progressPercent = allChecksPassed ? 100 : webcamReady ? 75 : 50;
+  const progressPercent = Math.round(
+    (completedChecks / checklistItems.length) * 100,
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -122,7 +135,14 @@ export function PreExamCheck() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Webcam Preview */}
           <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
-            <WebcamPreview onReady={() => setWebcamReady(true)} />
+            <WebcamPreview
+              onReady={() => {
+                setWebcamReady(true);
+              }}
+              onFaceDetectionChange={(detected) => {
+                setFaceDetected(detected);
+              }}
+            />
           </div>
 
           {/* System Checklist */}

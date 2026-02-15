@@ -12,6 +12,10 @@ import {
   RefreshCw,
 } from "lucide-react";
 
+const API_BASE =
+  ((import.meta as any).env.VITE_API_BASE as string) ||
+  "http://localhost:5000/api";
+
 interface CheckItem {
   id: string;
   label: string;
@@ -69,6 +73,52 @@ export function SystemCheck() {
     );
   }, []);
 
+  const detectFaceInFrame = useCallback(async (): Promise<boolean> => {
+    const video = videoRef.current;
+    if (!video) return false;
+
+    // Wait until we have video data to capture.
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return false;
+
+    const maxAttempts = 6;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const image = canvas.toDataURL("image/jpeg", 0.7);
+
+        try {
+          const response = await fetch(`${API_BASE}/proctoring/system-check/frame`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const faceCount = Number(data?.face_count ?? 0);
+            if (faceCount > 0) {
+              return true;
+            }
+          }
+        } catch {
+          // Continue retrying; final status will be set to error.
+        }
+      }
+
+      await new Promise((r) => setTimeout(r, 700));
+    }
+
+    return false;
+  }, []);
+
   const runChecks = useCallback(async () => {
     setIsRunning(true);
     
@@ -104,17 +154,17 @@ export function SystemCheck() {
       }
       updateCheck("webcam", "ok");
 
-      // Check 5: Face detection (simulated)
+      // Check 4: Face detection (real)
       updateCheck("face", "checking");
-      await new Promise((r) => setTimeout(r, 1500));
-      updateCheck("face", "ok");
+      const isFaceDetected = await detectFaceInFrame();
+      updateCheck("face", isFaceDetected ? "ok" : "error");
     } catch {
       updateCheck("webcam", "error");
       updateCheck("face", "error");
     }
 
     setIsRunning(false);
-  }, [updateCheck]);
+  }, [detectFaceInFrame, updateCheck]);
 
   // Auto-run checks on mount
   useEffect(() => {

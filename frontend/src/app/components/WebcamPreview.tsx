@@ -1,14 +1,91 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle } from "lucide-react";
 
+const API_BASE =
+  ((import.meta as any).env.VITE_API_BASE as string) ||
+  "http://localhost:5000/api";
+
 interface WebcamPreviewProps {
   onReady?: () => void;
+  onFaceDetectionChange?: (detected: boolean) => void;
 }
 
-export function WebcamPreview({ onReady }: WebcamPreviewProps) {
+export function WebcamPreview({
+  onReady,
+  onFaceDetectionChange,
+}: WebcamPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [faceDetected, setFaceDetected] = useState<boolean | null>(null);
+  const [isCheckingFace, setIsCheckingFace] = useState(false);
+
+  useEffect(() => {
+    if (!isReady || error) {
+      setFaceDetected(null);
+      return;
+    }
+
+    let cancelled = false;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320;
+    canvas.height = 240;
+    const ctx = canvas.getContext("2d");
+
+    const detectFace = async () => {
+      const video = videoRef.current;
+      if (!video || !ctx || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+        return;
+      }
+
+      setIsCheckingFace(true);
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL("image/jpeg", 0.7);
+
+      try {
+        const response = await fetch(`${API_BASE}/proctoring/system-check/frame`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ image }),
+        });
+
+        if (!response.ok) {
+          if (!cancelled) {
+            setFaceDetected(false);
+            onFaceDetectionChange?.(false);
+          }
+          return;
+        }
+
+        const data = await response.json();
+        const detected = Number(data?.face_count ?? 0) > 0;
+
+        if (!cancelled) {
+          setFaceDetected(detected);
+          onFaceDetectionChange?.(detected);
+        }
+      } catch {
+        if (!cancelled) {
+          setFaceDetected(false);
+          onFaceDetectionChange?.(false);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsCheckingFace(false);
+        }
+      }
+    };
+
+    void detectFace();
+    const intervalId = window.setInterval(() => {
+      void detectFace();
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [error, isReady, onFaceDetectionChange]);
 
   useEffect(() => {
     async function initWebcam() {
@@ -21,11 +98,14 @@ export function WebcamPreview({ onReady }: WebcamPreviewProps) {
           videoRef.current.srcObject = stream;
           setIsReady(true);
           setError(null);
+          setFaceDetected(null);
           onReady?.();
         }
       } catch (err: any) {
         setError(err.message || "Failed to access webcam");
         setIsReady(false);
+        setFaceDetected(false);
+        onFaceDetectionChange?.(false);
       }
     }
 
@@ -38,7 +118,7 @@ export function WebcamPreview({ onReady }: WebcamPreviewProps) {
           .forEach((track) => track.stop());
       }
     };
-  }, [onReady]);
+  }, [onFaceDetectionChange, onReady]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -69,11 +149,30 @@ export function WebcamPreview({ onReady }: WebcamPreviewProps) {
           </div>
         </div>
       ) : isReady ? (
-        <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg p-3">
-          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
-          <span className="text-sm font-medium text-green-700">
-            Webcam is ready
-          </span>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg p-3">
+            <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+            <span className="text-sm font-medium text-green-700">
+              Webcam is ready
+            </span>
+          </div>
+          <div
+            className={`rounded-lg p-3 text-sm font-medium ${
+              faceDetected === true
+                ? "bg-green-50 border border-green-200 text-green-700"
+                : faceDetected === false
+                  ? "bg-red-50 border border-red-200 text-red-700"
+                  : "bg-amber-50 border border-amber-200 text-amber-700"
+            }`}
+          >
+            {faceDetected === true
+              ? "Face detected"
+              : faceDetected === false
+                ? "No face detected. Sit in front of the camera."
+                : isCheckingFace
+                  ? "Checking for face..."
+                  : "Preparing face check..."}
+          </div>
         </div>
       ) : null}
     </div>
