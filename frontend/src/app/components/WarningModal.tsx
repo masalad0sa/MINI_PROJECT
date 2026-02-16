@@ -3,6 +3,7 @@ import { AlertTriangle, ShieldAlert, XCircle } from "lucide-react";
 interface WarningModalProps {
   isOpen: boolean;
   violationType: string;
+  violationDescription?: string;
   violationCount: number;
   onClose: () => void;
 }
@@ -10,6 +11,7 @@ interface WarningModalProps {
 export function WarningModal({
   isOpen,
   violationType,
+  violationDescription,
   violationCount,
   onClose,
 }: WarningModalProps) {
@@ -30,7 +32,11 @@ export function WarningModal({
   const isFinalWarning = violationCount >= 2;
   const isAutoSubmit = violationCount >= 3;
 
-  const getViolationMessage = (type: string) => {
+  const getViolationMessage = (type: string, description?: string) => {
+    if (description && description.trim().length > 0) {
+      return description;
+    }
+
     switch (type) {
       case "TAB_SWITCH":
         return "You switched to another tab or window";
@@ -44,6 +50,16 @@ export function WarningModal({
         return "Attempting to open developer tools is prohibited";
       case "KEYBOARD_SHORTCUT":
         return "Prohibited keyboard shortcut detected";
+      case "MULTIPLE_FACES":
+        return "Multiple faces detected in webcam feed";
+      case "PROHIBITED_OBJECT":
+        return "Prohibited object detected in webcam feed";
+      case "NO_FACE":
+        return "No face detected in webcam feed";
+      case "HIGH_SUSPICION":
+        return "High suspicion behavior detected";
+      case "AI_FLAG":
+        return "AI proctoring flagged suspicious behavior";
       default:
         return "A security violation was detected";
     }
@@ -82,8 +98,15 @@ export function WarningModal({
 
         {/* Violation message */}
         <p className="text-white/90 mb-4">
-          {getViolationMessage(violationType)}
+          {getViolationMessage(violationType, violationDescription)}
         </p>
+
+        <div className="bg-white/20 rounded-lg py-2 px-4 mb-4">
+          <p className="text-white text-sm">
+            Triggered violation:{" "}
+            <span className="font-bold tracking-wide">{violationType || "UNKNOWN"}</span>
+          </p>
+        </div>
 
         {/* Violation count */}
         <div className="bg-white/20 rounded-lg py-3 px-4 mb-6">

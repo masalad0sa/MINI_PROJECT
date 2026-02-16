@@ -13,7 +13,8 @@ const violationSchema = new mongoose.Schema({
       "AI_FLAG",
       "MULTIPLE_FACES",
       "PROHIBITED_OBJECT",
-      "HIGH_SUSPICION"
+      "HIGH_SUSPICION",
+      "NO_FACE",
     ],
     required: true,
   },

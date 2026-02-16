@@ -50,6 +50,9 @@ export function ActiveExam() {
   const [violationCount, setViolationCount] = useState(0);
   const [showSecurityWarning, setShowSecurityWarning] = useState(false);
   const [lastViolationType, setLastViolationType] = useState<string>("TAB_SWITCH");
+  const [lastViolationDescription, setLastViolationDescription] = useState<string>(
+    "A security violation was detected.",
+  );
   const [securityEnabled, setSecurityEnabled] = useState(false);
   const [sessionControlState, setSessionControlState] = useState<
     "ACTIVE" | "PAUSED" | "TERMINATED"
@@ -166,8 +169,8 @@ export function ActiveExam() {
     }
   }, [answers, sessionId, examId, submitting, showResults]);
 
-  // Debounce ref to prevent spamming violations
-  const lastViolationTime = useRef<number>(0);
+  // Debounce by violation type to prevent repeated spam events.
+  const lastViolationByType = useRef<Record<string, number>>({});
 
   // Handle security violations
   const handleViolation = useCallback(async (violation: {
@@ -178,14 +181,13 @@ export function ActiveExam() {
   }) => {
     if (!sessionId || showResults || hasAutoSubmitted.current) return;
 
-    // Check debounce (5 seconds cooldown - matches WarningModal)
-    // Check debounce (5 seconds cooldown - matches WarningModal)
-    // const now = Date.now();
-    // if (now - lastViolationTime.current < 5000) {
-    //     console.log("[ActiveExam] Violation ignored due to cooldown");
-    //     return;
-    // }
-    const now = Date.now(); // Keep 'now' variable for later usage
+    const now = Date.now();
+    const violationKey = String(violation.type || "UNKNOWN");
+    const cooldownMs = 8000;
+    const previous = lastViolationByType.current[violationKey] || 0;
+    if (now - previous < cooldownMs) {
+      return;
+    }
 
     // Map AI violation types to known types if possible, or pass string
     const type = violation.type as ViolationType; 
@@ -203,9 +205,10 @@ export function ActiveExam() {
       );
 
       if (res?.success) {
-        lastViolationTime.current = now; // Update timestamp only on success
+        lastViolationByType.current[violationKey] = now;
         setViolationCount(res.data.violationCount);
         setLastViolationType(violation.type);
+        setLastViolationDescription(violation.description || "A security violation was detected.");
         setShowSecurityWarning(true);
 
         if (res.data.shouldAutoSubmit && !hasAutoSubmitted.current) {
@@ -225,6 +228,9 @@ export function ActiveExam() {
       let severity: ViolationSeverity = "MEDIUM";
       let description = "Suspicious behavior detected";
       let type = "AI_FLAG";
+      const detectedObjects = Array.isArray(event.detectedObjects)
+        ? event.detectedObjects.filter((value) => value && value.trim().length > 0)
+        : [];
 
       switch(event.type) {
           case "MULTIPLE_FACES":
@@ -234,7 +240,10 @@ export function ActiveExam() {
               break;
           case "PROHIBITED_OBJECT":
               severity = "CRITICAL";
-              description = "Prohibited object detected (Phone/Book)";
+              description =
+                detectedObjects.length > 0
+                  ? `Prohibited object detected: ${detectedObjects.join(", ")}`
+                  : "Prohibited object detected";
               type = "PROHIBITED_OBJECT";
               break;
           case "NO_FACE":
@@ -248,6 +257,26 @@ export function ActiveExam() {
               type = "HIGH_SUSPICION";
               break;
       }
+      if (event.description && event.description.trim().length > 0) {
+        description = event.description.trim();
+      }
+
+      if (event.backendLogged) {
+        if (typeof event.violationCount === "number") {
+          setViolationCount(event.violationCount);
+        }
+        setLastViolationType(type);
+        setLastViolationDescription(description);
+        setShowSecurityWarning(true);
+
+        const shouldAutoSubmit =
+          event.shouldAutoSubmit || (event.violationCount || 0) >= 3;
+        if (shouldAutoSubmit && !hasAutoSubmitted.current) {
+          hasAutoSubmitted.current = true;
+          setTimeout(() => handleSubmit(), 3000);
+        }
+        return;
+      }
 
       handleViolation({
           type, 
@@ -255,9 +284,14 @@ export function ActiveExam() {
           description,
           evidence: event.evidence
       });
-  }, [handleViolation]);
+  }, [handleSubmit, handleViolation]);
 
-  const proctoringState = useProctoring(videoRef, handleAIViolation);
+  const proctoringState = useProctoring(videoRef, handleAIViolation, {
+    examId,
+    sessionId,
+    frameIntervalMs: 1000,
+    violationCooldownMs: 8000,
+  });
 
   // Attach stream to video element when it becomes available
   useEffect(() => {
@@ -791,6 +825,7 @@ export function ActiveExam() {
       <WarningModal
         isOpen={showSecurityWarning}
         violationType={lastViolationType}
+        violationDescription={lastViolationDescription}
         violationCount={violationCount}
         onClose={() => {
           setShowSecurityWarning(false);
@@ -1064,6 +1099,47 @@ export function ActiveExam() {
                   width: `${(attemptedCount / questions.length) * 100}%`,
                 }}
               ></div>
+            </div>
+          </div>
+
+          {/* Proctoring Signals */}
+          <div className="mt-4 bg-slate-50 border border-slate-200 rounded-lg p-4">
+            <h4 className="font-semibold text-slate-700 text-sm mb-3">
+              Live Proctoring Signals
+            </h4>
+            <div className="space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Face Count</span>
+                <span className="font-semibold text-slate-700">
+                  {proctoringState.facesDetected}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Gaze</span>
+                <span className="font-semibold text-slate-700">
+                  {proctoringState.gazeDirection}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Head Position</span>
+                <span className="font-semibold text-slate-700">
+                  {proctoringState.headPose}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-slate-500">Risk</span>
+                <span
+                  className={`font-semibold ${
+                    proctoringState.riskLevel === "HIGH"
+                      ? "text-red-600"
+                      : proctoringState.riskLevel === "MEDIUM"
+                        ? "text-amber-600"
+                        : "text-green-600"
+                  }`}
+                >
+                  {proctoringState.riskLevel}
+                </span>
+              </div>
             </div>
           </div>
 

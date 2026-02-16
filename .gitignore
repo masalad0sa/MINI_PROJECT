@@ -9,4 +9,5 @@ build/
 .idea/
 .vscode/
 AI_PROCTORING/venv/
+AI_PROCTORING/evidence/
 venv/

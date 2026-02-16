@@ -166,6 +166,15 @@ export async function getExamResults(examId: string) {
   return handleResponse(res);
 }
 
+export async function getCurrentUser() {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/auth/me`, { headers });
+  return handleResponse(res);
+}
+
 export async function getStudentExamSessionStatus(sessionId: string) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",

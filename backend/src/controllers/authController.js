@@ -141,6 +141,29 @@ export const login = async (req, res) => {
   }
 };
 
+export const getMe = async (req, res) => {
+  try {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user: {
+        id: req.user._id,
+        userId: req.user.userId,
+        email: req.user.email,
+        name: req.user.name,
+        role: req.user.role,
+      },
+    });
+  } catch (error) {
+    return res
+      .status(500)
+      .json({ message: "Failed to fetch user profile", error: error.message });
+  }
+};
+
 export const logout = async (req, res) => {
   try {
     const token = req.token;

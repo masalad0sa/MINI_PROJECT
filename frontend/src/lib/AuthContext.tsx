@@ -70,6 +70,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     storeUser(user);
   }, [user]);
 
+  // Reconcile cached user with backend source of truth (role may have changed).
+  useEffect(() => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) return;
+
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+
+    api
+      .getCurrentUser()
+      .then((res) => {
+        if (cancelled) return;
+        if (res?.success && res?.user) {
+          setUser(res.user);
+        } else {
+          api.clearToken();
+          localStorage.removeItem(STORAGE_KEY);
+          setUser(null);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        api.clearToken();
+        localStorage.removeItem(STORAGE_KEY);
+        setUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const login = useCallback(async (email: string, password: string) => {
     setIsLoading(true);
     setError(null);

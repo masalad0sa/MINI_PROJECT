@@ -1,9 +1,11 @@
 
 import express from 'express';
-import { processFrame } from '../controllers/proctoring.js';
+import { processFrame, getProctoringHealth } from '../controllers/proctoring.js';
 // import { protect } from '../middleware/auth.js'; // Assuming we want auth
 
 const router = express.Router();
+
+router.get('/health', getProctoringHealth);
 
 // Supports:
 // POST /api/exam/:id/frame
