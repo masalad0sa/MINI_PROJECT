@@ -23,9 +23,7 @@ const getTokenExpiration = (token) => {
 
 export const register = async (req, res) => {
   try {
-    const { email, password, name, userId } = req.body;
-    // SECURITY FIX: Ignore role from request body - always create as student
-    const role = "student";
+    const { email, password, name, userId, role } = req.body;
 
     // Validation
     if (!email || !password || !name || !userId) {

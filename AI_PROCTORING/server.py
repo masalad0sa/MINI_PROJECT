@@ -3,6 +3,7 @@ import os
 import sys
 import threading
 import time
+from datetime import datetime
 from typing import Dict, Optional
 
 import cv2
@@ -21,6 +22,7 @@ from modules.face_detection import FaceDetector
 from modules.face_mesh import FaceMeshDetector
 from modules.head_pose import HeadPoseEstimator
 from modules.object_detector import ObjectDetector
+from modules.logger import ExamLogger
 
 app = FastAPI()
 
@@ -36,11 +38,15 @@ print("Initializing AI Models...")
 face_detector = FaceDetector()
 mesh_detector = FaceMeshDetector()
 object_detector = ObjectDetector()
+exam_logger = ExamLogger()
 print("Models Initialized!")
+
+EVIDENCE_DIR = "evidence"
+os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
 
 STATE_TTL_SECONDS = 30 * 60
-VIOLATION_COOLDOWN_SECONDS = 8
+VIOLATION_COOLDOWN_SECONDS = 5
 NO_FACE_STREAK_FOR_HIGH = 5
 MULTI_FACE_STREAK_FOR_HIGH = 2
 OBJECT_STREAK_FOR_HIGH = 2
@@ -66,6 +72,7 @@ class SessionState:
         self.last_violation_type: Optional[str] = None
         self.last_violation_at = 0.0
         self.last_updated = time.time()
+        self.evidence_captured = False
 
 
 SESSION_STATES: Dict[str, SessionState] = {}
@@ -203,6 +210,8 @@ async def process_frame(data: FrameData):
         else:
             state.multi_face_streak = max(0, state.multi_face_streak - 1)
 
+        multi_face_detected = effective_face_count > 1
+
         # 2. Object detection with persistence + high-confidence shortcut.
         object_result = object_detector.detect(frame, with_metadata=True)
         raw_objects = object_result.get("labels", [])
@@ -217,6 +226,8 @@ async def process_frame(data: FrameData):
             ]
         )
         active_object_alerts = sorted(set(confirmed_objects + high_confidence_objects))
+        
+        phone_detected = "cell phone" in active_object_alerts
         prohibited_object_detected = len(active_object_alerts) > 0
 
         # 3. Gaze/head behavior.
@@ -245,13 +256,22 @@ async def process_frame(data: FrameData):
         if state.multi_face_streak > 0:
             multi_face_penalty = min(90, 30 + state.multi_face_streak * 15)
             score = max(score, multi_face_penalty)
+        
+        # Explicit score adjustments from requirements
+        if multi_face_detected:
+            score += 5
+        if phone_detected:
+            score += 10
+
         if prohibited_object_detected:
             score = max(score, 90)
 
         score = int(max(0, min(100, score)))
 
         violation_type = None
-        if prohibited_object_detected:
+        if phone_detected:
+            violation_type = "PROHIBITED_OBJECT"
+        elif prohibited_object_detected:
             violation_type = "PROHIBITED_OBJECT"
         elif state.multi_face_streak >= MULTI_FACE_STREAK_FOR_HIGH:
             violation_type = "MULTIPLE_FACES"
@@ -269,74 +289,51 @@ async def process_frame(data: FrameData):
         else:
             risk_level = "LOW"
             risk_color = (0, 255, 0)
+        
+        # Override for phone
+        if phone_detected:
+             risk_level = "HIGH"
+             risk_color = (0, 0, 255)
+
+        # Evidence Capture
+        if risk_level == "HIGH" and not state.evidence_captured:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            reason = "MULTI_FACE" if multi_face_detected else (violation_type or "SUSPICIOUS_BEHAVIOR")
+            filename = os.path.join(EVIDENCE_DIR, f"evidence_{reason}_{timestamp}.jpg")
+            
+            # Save original frame
+            cv2.imwrite(filename, frame)
+            state.evidence_captured = True
+        elif risk_level != "HIGH":
+            state.evidence_captured = False
+
+        # Logging
+        exam_logger.log(
+            gaze_dir, 
+            head_dir, 
+            head_angle, 
+            effective_face_count, 
+            score, 
+            risk_level, 
+            ",".join(active_object_alerts)
+        )
 
         should_log_violation = _should_log_violation(state, violation_type)
 
-        cv2.putText(
-            frame,
-            f"Gaze: {gaze_dir}",
-            (20, 35),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2,
-        )
-        cv2.putText(
-            frame,
-            f"Head: {head_dir}",
-            (20, 65),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 255, 0),
-            2,
-        )
-        cv2.putText(
-            frame,
-            f"Score: {score}",
-            (20, 95),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.6,
-            (0, 0, 255),
-            2,
-        )
-        cv2.putText(
-            frame,
-            f"Risk: {risk_level}",
-            (20, 125),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            risk_color,
-            2,
-        )
-        cv2.putText(
-            frame,
-            f"Faces D/M/E: {detector_face_count}/{mesh_face_count}/{effective_face_count}",
-            (20, 155),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (255, 255, 0),
-            2,
-        )
-        if violation_type:
-            cv2.putText(
-                frame,
-                violation_type,
-                (20, 185),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2,
-            )
-        if active_object_alerts:
-            cv2.putText(
-                frame,
-                f"OBJECT: {', '.join(active_object_alerts)}",
-                (20, 215),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (0, 0, 255),
-                2,
-            )
+        # Drawing Overlay
+        cv2.putText(frame, f"Gaze: {gaze_dir}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"Head: {head_dir}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        cv2.putText(frame, f"Suspicion Score: {score}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(frame, f"Angle: {int(head_angle)}", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
+        cv2.putText(frame, f"Risk Level: {risk_level}", (20, 160), cv2.FONT_HERSHEY_SIMPLEX, 0.8, risk_color, 2)
+        
+        cv2.putText(frame, f"Faces Detected: {effective_face_count}", (20, h - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+        if risk_level == "HIGH":
+             cv2.putText(frame, "EVIDENCE CAPTURED", (w - 320, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
+        if phone_detected:
+            cv2.putText(frame, "WARNING: PHONE DETECTED", (w - 380, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
         _, buffer = cv2.imencode(".jpg", frame)
         processed_image_b64 = base64.b64encode(buffer).decode("utf-8")

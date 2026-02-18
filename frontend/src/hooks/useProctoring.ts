@@ -65,7 +65,7 @@ export const useProctoring = (
     debugCanvas: null,
   });
 
-  const requestRef = useRef<number>();
+  const requestRef = useRef<number | undefined>(undefined);
   const debugCanvasRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
   const proctoringActive = useRef(true);
   const lastProcessTime = useRef<number>(0);

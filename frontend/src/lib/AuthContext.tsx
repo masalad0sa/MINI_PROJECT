@@ -25,6 +25,7 @@ interface AuthContextType {
     email: string,
     password: string,
     name: string,
+    userId: string,
     role?: string,
   ) => Promise<void>;
 }
@@ -137,11 +138,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (email: string, password: string, name: string, role = "student") => {
+    async (email: string, password: string, name: string, userId: string, role = "student") => {
       setIsLoading(true);
       setError(null);
       try {
-        const res = await api.register(email, password, name, role);
+        const res = await api.register(email, password, name, userId, role);
         if (res?.success && res?.token) {
           api.setToken(res.token);
           setUser(res.user);
@@ -171,4 +172,3 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
-

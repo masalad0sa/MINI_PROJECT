@@ -1,13 +1,34 @@
+# Dependencies
 node_modules/
+venv/
+AI_PROCTORING/venv/
+
+# Environment
 .env
 .env.local
 .env.*.local
+
+# Builds
 dist/
 build/
+
+# Logs & Data
 *.log
-.DS_Store
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+AI_PROCTORING/evidence/
+AI_PROCTORING/*.csv
+AI_PROCTORING/__pycache__/
+
+# IDE / Editor
 .idea/
 .vscode/
-AI_PROCTORING/venv/
+.DS_Store
+
+# Temporary Scripts
+*.ps1
+*.tmp
+backend/scripts/temp_login.json
 AI_PROCTORING/evidence/
 venv/

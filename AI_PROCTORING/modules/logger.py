@@ -19,7 +19,7 @@ class ExamLogger:
                     "multi_face",
                     "suspicion_score",
                     "risk_level",
-                    "phone_detected"
+                    "detected_objects"
                 ])
 
     def log(self, gaze, head, angle, face_count, score, risk,detected_objects):

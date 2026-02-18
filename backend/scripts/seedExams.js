@@ -1,7 +1,7 @@
 
 import mongoose from "mongoose";
-import Exam from "./models/Exam.js";
-import User from "./models/User.js"; // Import User model
+import Exam from "../src/models/Exam.js";
+import User from "../src/models/User.js"; // Import User model
 import dotenv from "dotenv";
 
 dotenv.config();

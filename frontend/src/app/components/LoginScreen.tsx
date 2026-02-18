@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useAuth } from "../../lib/AuthContext";
+import { Link } from "react-router-dom";
 import { AlertCircle, Loader, LogIn } from "lucide-react";
 
 export function LoginScreen() {
@@ -11,6 +12,7 @@ export function LoginScreen() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError("");
+    console.log("Login attempt:", { email, password });
     try {
       await login(email, password);
     } catch (err) {
@@ -126,6 +128,15 @@ export function LoginScreen() {
                 🔐 <span className="font-mono">password123</span>
               </li>
             </ul>
+          </div>
+          
+          <div className="text-center mt-4">
+            <p className="text-sm text-slate-600">
+              Don't have an account?{" "}
+              <Link to="/signup" className="text-blue-600 hover:text-blue-800 font-medium">
+                Sign up
+              </Link>
+            </p>
           </div>
         </form>
 

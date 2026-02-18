@@ -58,14 +58,22 @@ export async function register(
   email: string,
   password: string,
   name: string,
+  userId: string,
   role = "student",
 ) {
-  const res = await fetch(`${API_BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name, role }),
-  });
-  return res.json();
+  try {
+    const body = JSON.stringify({ email, password, name, userId, role });
+    const res = await fetch(`${API_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    return res.json();
+  } catch (err) {
+    console.error("API Register Error:", err);
+    console.log("Arguments:", { email, password, name, userId, role });
+    throw err;
+  }
 }
 
 export async function getExams() {

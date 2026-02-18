@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { LoginScreen } from "./app/components/LoginScreen";
+import { SignUpScreen } from "./app/components/SignUpScreen";
 import { StudentDashboard } from "./app/components/StudentDashboard";
 import { PreExamCheck } from "./app/components/PreExamCheck";
 import { SystemCheck } from "./app/components/SystemCheck";
@@ -94,6 +95,7 @@ export function AppRouter() {
         {/* Public routes */}
         <Route element={<PublicRoute />}>
           <Route path="/" element={<LoginScreen />} />
+          <Route path="/signup" element={<SignUpScreen />} />
         </Route>
 
         {/* Protected routes with main layout */}
