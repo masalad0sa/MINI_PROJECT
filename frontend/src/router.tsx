@@ -21,6 +21,7 @@ import { IntegrityReport } from "./app/components/IntegrityReport";
 import { UserManagement } from "./app/components/UserManagement";
 import { CreateExam } from "./app/components/CreateExam";
 import { ExaminerDashboard } from "./app/components/ExaminerDashboard";
+import { ExamErrorBoundary } from "./app/components/ExamErrorBoundary";
 import { MainLayout } from "./app/MainLayout";
 
 // Protected route wrapper - redirects to login if not authenticated
@@ -39,7 +40,7 @@ function ProtectedRoute() {
 function AdminRoute() {
   const { user } = useAuth();
 
-  if (!user || (user.role !== "admin" && user.role !== "moderator")) {
+  if (!user || user.role !== "admin") {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -129,7 +130,7 @@ export function AppRouter() {
 
           {/* Active Exam - No Layout - Student Only */}
           <Route element={<StudentRoute />}>
-            <Route path="/exam/:examId" element={<ActiveExam />} />
+            <Route path="/exam/:examId" element={<ExamErrorBoundary><ActiveExam /></ExamErrorBoundary>} />
           </Route>
         </Route>
 

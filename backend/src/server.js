@@ -2,6 +2,10 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import helmet from "helmet";
+import rateLimit from "express-rate-limit";
+import { createServer } from "http";
+import { setupSocket } from "./socket.js";
 import authRoutes from "./routes/auth.js";
 import studentRoutes from "./routes/student.js";
 import examRoutes from "./routes/exam.js";
@@ -22,6 +26,29 @@ mongoose
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.log("MongoDB connection error:", err));
 
+// Security middleware
+app.use(helmet());
+
+// Rate limiters
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 500, // limit each IP to 500 requests per 15-min window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many requests, please try again later." },
+  skip: () => process.env.NODE_ENV === "test",
+});
+app.use(globalLimiter);
+
+const authLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 15, // limit each IP to 15 auth requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many login attempts, please try again after a minute." },
+  skip: () => process.env.NODE_ENV === "test",
+});
+
 // Middleware
 app.use(
   cors({
@@ -33,7 +60,7 @@ app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // Routes
-app.use("/api/auth", authRoutes);
+app.use("/api/auth", authLimiter, authRoutes);
 app.use("/api/student", studentRoutes);
 
 app.use("/api/exam", examRoutes);
@@ -60,6 +87,16 @@ app.use((req, res) => {
   res.status(404).json({ message: "Route not found" });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+// Create HTTP server and attach Socket.IO
+const httpServer = createServer(app);
+const io = setupSocket(httpServer);
+app.set("io", io);
+
+if (process.env.NODE_ENV !== "test") {
+  httpServer.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+  });
+}
+
+export { app, httpServer };
+

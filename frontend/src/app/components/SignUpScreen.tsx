@@ -34,9 +34,6 @@ export function SignUpScreen() {
       return;
     }
 
-    // Debugging logs
-    console.log("Submitting Registration:", { email, password, name, userId, role });
-    
     try {
       await register(email, password, name, userId, role);
       navigate("/dashboard"); // Redirect to dashboard after successful registration

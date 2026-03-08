@@ -4,7 +4,7 @@ export interface User {
   id: string;
   email: string;
   name: string;
-  role: "student" | "admin" | "moderator";
+  role: "student" | "examiner" | "admin";
 }
 
 export interface Question {

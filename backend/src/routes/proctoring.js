@@ -1,16 +1,17 @@
 
 import express from 'express';
-import { processFrame, getProctoringHealth } from '../controllers/proctoring.js';
-// import { protect } from '../middleware/auth.js'; // Assuming we want auth
+import { processFrame, getProctoringHealth, systemCheckFrame } from '../controllers/proctoring.js';
+import { protect } from '../middleware/auth.js';
 
 const router = express.Router();
 
 router.get('/health', getProctoringHealth);
 
-// Supports:
-// POST /api/exam/:id/frame
+// Lightweight face-only check for pre-exam system check (no auth needed).
+router.post('/system-check/frame', systemCheckFrame);
+
 // POST /api/proctoring/:id/frame
-// In production, add 'protect' middleware to ensure student is logged in
-router.post('/:id/frame', processFrame);
+// Requires authentication — student must be logged in.
+router.post('/:id/frame', protect, processFrame);
 
 export default router;

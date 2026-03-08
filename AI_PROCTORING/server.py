@@ -26,9 +26,18 @@ from modules.logger import ExamLogger
 
 app = FastAPI()
 
+# Only accept requests from the Node backend (localhost:5000) and the
+# frontend dev server. In production, further restrict to actual domain.
+_ALLOWED_ORIGINS = [
+    "http://localhost:5000",
+    "http://127.0.0.1:5000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,7 +45,6 @@ app.add_middleware(
 
 print("Initializing AI Models...")
 face_detector = FaceDetector()
-mesh_detector = FaceMeshDetector()
 object_detector = ObjectDetector()
 exam_logger = ExamLogger()
 print("Models Initialized!")
@@ -46,21 +54,34 @@ os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
 
 STATE_TTL_SECONDS = 30 * 60
-VIOLATION_COOLDOWN_SECONDS = 5
-NO_FACE_STREAK_FOR_HIGH = 5
+# Keep in sync with Node/frontend cooldowns (8000ms).
+VIOLATION_COOLDOWN_SECONDS = 8
+# Lowered from 5 → 3 for web: at ~2 FPS, 3 frames ≈ 1.5s sustained absence.
+NO_FACE_STREAK_FOR_HIGH = 3
 MULTI_FACE_STREAK_FOR_HIGH = 2
 OBJECT_STREAK_FOR_HIGH = 2
-OBJECT_IMMEDIATE_CONFIDENCE = 0.72
+OBJECT_IMMEDIATE_CONFIDENCE = 0.6
 
 
 class FrameData(BaseModel):
     image: str
     session_id: Optional[str] = None
     exam_id: Optional[str] = None
+    objects_only: bool = False
 
 
 class SessionState:
     def __init__(self):
+        # Use static_image_mode=True for web sessions. Frames arrive at ~1-2 FPS,
+        # so tracking mode loses context between frames and fails frequently.
+        # Static mode runs full re-detection on every frame, which is more reliable.
+        self.mesh_detector = FaceMeshDetector(
+            static_image_mode=True,
+            max_num_faces=2,
+            refine_landmarks=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
         self.behavior_analyzer = BehaviorAnalyzer()
         self.gaze_tracker = EyeGazeTracker()
         self.head_pose = HeadPoseEstimator()
@@ -73,6 +94,13 @@ class SessionState:
         self.last_violation_at = 0.0
         self.last_updated = time.time()
         self.evidence_captured = False
+
+    def close(self):
+        try:
+            self.mesh_detector.face_mesh.close()
+        except Exception:
+            # Best-effort cleanup.
+            pass
 
 
 SESSION_STATES: Dict[str, SessionState] = {}
@@ -96,6 +124,10 @@ def _get_session_state(session_key: str):
             if now - value.last_updated > STATE_TTL_SECONDS
         ]
         for stale_key in stale_keys:
+            try:
+                SESSION_STATES[stale_key].close()
+            except Exception:
+                pass
             del SESSION_STATES[stale_key]
 
         state = SESSION_STATES.get(session_key)
@@ -176,6 +208,8 @@ async def health():
 async def process_frame(data: FrameData):
     try:
         frame = _decode_frame(data.image)
+        # NOTE: Browser webcam feeds are already mirrored. Do NOT flip again
+        # to avoid inverting left/right gaze detection.
         h, w, _ = frame.shape
 
         session_key = _build_session_key(data)
@@ -184,7 +218,7 @@ async def process_frame(data: FrameData):
 
         # 1. Face detection + mesh cross-check.
         frame, detector_face_count = face_detector.detect_faces(frame)
-        mesh_results = mesh_detector.process(frame)
+        mesh_results = state.mesh_detector.process(frame)
         mesh_face_count = (
             len(mesh_results.multi_face_landmarks)
             if mesh_results and mesh_results.multi_face_landmarks
@@ -226,9 +260,32 @@ async def process_frame(data: FrameData):
             ]
         )
         active_object_alerts = sorted(set(confirmed_objects + high_confidence_objects))
-        
-        phone_detected = "cell phone" in active_object_alerts
-        prohibited_object_detected = len(active_object_alerts) > 0
+        display_object_alerts = active_object_alerts if active_object_alerts else raw_objects
+        phone_detected = "cell phone" in display_object_alerts
+        prohibited_object_detected = len(raw_objects) > 0
+
+        # If objects_only mode (browser handles face/gaze), skip face mesh entirely.
+        if data.objects_only:
+            violation_type = None
+            should_log = False
+            if prohibited_object_detected:
+                violation_type = "PROHIBITED_OBJECT"
+                should_log = _should_log_violation(state, violation_type)
+
+            return {
+                "face_count": -1,
+                "gaze_direction": "BROWSER_SIDE",
+                "head_direction": "BROWSER_SIDE",
+                "suspicion_score": 0,
+                "risk_level": "LOW" if not prohibited_object_detected else "HIGH",
+                "objects": display_object_alerts,
+                "confirmed_objects": confirmed_objects,
+                "high_confidence_objects": high_confidence_objects,
+                "object_detections": object_detections,
+                "violation_type": violation_type,
+                "should_log_violation": should_log,
+                "objects_only": True,
+            }
 
         # 3. Gaze/head behavior.
         gaze_dir = "LOOKING CENTER"
@@ -315,7 +372,7 @@ async def process_frame(data: FrameData):
             effective_face_count, 
             score, 
             risk_level, 
-            ",".join(active_object_alerts)
+            ",".join(display_object_alerts)
         )
 
         should_log_violation = _should_log_violation(state, violation_type)
@@ -343,7 +400,8 @@ async def process_frame(data: FrameData):
             "face_count": int(effective_face_count),
             "raw_face_count": int(detector_face_count),
             "mesh_face_count": int(mesh_face_count),
-            "objects": active_object_alerts,
+            "objects": display_object_alerts,
+            "active_object_alerts": active_object_alerts,
             "confirmed_objects": confirmed_objects,
             "raw_objects": raw_objects,
             "high_confidence_objects": high_confidence_objects,
@@ -370,6 +428,28 @@ async def process_frame(data: FrameData):
         raise
     except Exception as error:
         print(f"Error processing frame: {error}")
+        raise HTTPException(status_code=500, detail=str(error))
+
+
+class SystemCheckData(BaseModel):
+    image: str
+
+
+@app.post("/system_check")
+async def system_check(data: SystemCheckData):
+    """Lightweight face-only check for the pre-exam system check page.
+    Does NOT create a persistent session state."""
+    try:
+        frame = _decode_frame(data.image)
+        _, detector_face_count = face_detector.detect_faces(frame)
+        return {
+            "success": True,
+            "face_count": int(detector_face_count),
+        }
+    except HTTPException:
+        raise
+    except Exception as error:
+        print(f"Error in system_check: {error}")
         raise HTTPException(status_code=500, detail=str(error))
 
 

@@ -36,7 +36,7 @@ export default function App() {
     ];
 
     // Admins see all screens, students see only student screens
-    if (user?.role === "admin" || user?.role === "moderator") {
+    if (user?.role === "admin") {
       return [...studentScreens, ...adminScreens];
     }
     return studentScreens;

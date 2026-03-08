@@ -32,3 +32,4 @@ AI_PROCTORING/__pycache__/
 backend/scripts/temp_login.json
 AI_PROCTORING/evidence/
 venv/
+evidence

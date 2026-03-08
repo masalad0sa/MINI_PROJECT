@@ -1,4 +1,5 @@
-import { Submission, Exam } from "../models/student.js";
+import Submission from "../models/Submission.js";
+import Exam from "../models/Exam.js";
 // Note: User import removed - was unused
 
 export const getStudentDashboard = async (req, res) => {
@@ -12,12 +13,10 @@ export const getStudentDashboard = async (req, res) => {
     }).select("-questions");
 
       // Fetch student submissions
-    console.log(`[Dashboard] Fetching for student: ${studentId}`);
     const submissions = await Submission.find({ studentId }).populate(
       "examId",
       "title passingScore",
     );
-    console.log(`[Dashboard] Found ${submissions.length} submissions for ${studentId}`);
 
     // Calculate stats
     const completedCount = submissions.filter(
@@ -59,7 +58,6 @@ export const startExam = async (req, res) => {
 
     const { examId } = req.params;
     const studentId = req.user?.id || req.body.studentId;
-    console.log(`[StartExam] Student: ${studentId}, Exam: ${examId}`);
 
     // Get exam
     const exam = await Exam.findById(examId);
@@ -140,6 +138,22 @@ export const startExam = async (req, res) => {
         },
       },
     });
+
+    // Emit real-time student:joined event to monitor namespace
+    try {
+      const io = req.app.get("io");
+      if (io?.monitorNs) {
+        io.monitorNs.to(`exam:${examId}`).emit("student:joined", {
+          studentId,
+          studentName: req.user?.name || "Unknown",
+          examId,
+          sessionId: submission._id,
+          timestamp: Date.now(),
+        });
+      }
+    } catch (socketErr) {
+      console.warn("[socket] Failed to emit student:joined", socketErr.message);
+    }
   } catch (error) {
     res
       .status(500)
@@ -198,11 +212,25 @@ export const submitExam = async (req, res) => {
       Math.round((nowMs - startedMs - pausedMs) / 1000),
     );
     
-    console.log(`[SubmitExam] Saving submission: ${sessionId}`);
-    console.log(`[SubmitExam] Student: ${submission.studentId}, Score: ${submission.score}, Status: ${submission.status}`);
-
     await submission.save();
-    console.log(`[SubmitExam] Submission saved successfully.`);
+
+    // Emit real-time student:left event to monitor namespace
+    try {
+      const io = req.app.get("io");
+      if (io?.monitorNs) {
+        io.monitorNs.to(`exam:${submission.examId._id.toString()}`).emit("student:left", {
+          studentId,
+          studentName: req.user?.name || "Unknown",
+          examId: submission.examId._id.toString(),
+          sessionId,
+          score: Math.round(score),
+          status: submission.status,
+          timestamp: Date.now(),
+        });
+      }
+    } catch (socketErr) {
+      console.warn("[socket] Failed to emit student:left", socketErr.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -414,6 +442,28 @@ export const logViolation = async (req, res) => {
     }
 
     await submission.save();
+
+    // Emit real-time violation event to monitor namespace
+    try {
+      const io = req.app.get("io");
+      if (io?.monitorNs) {
+        io.monitorNs.to(`exam:${submission.examId.toString()}`).emit("violation:new", {
+          submissionId: sessionId,
+          studentId,
+          studentName: req.user?.name || "Unknown",
+          examId: submission.examId.toString(),
+          type,
+          severity,
+          description: description || `${type} violation detected`,
+          violationCount: submission.violationCount,
+          isSuspicious: submission.isSuspicious,
+          timestamp: Date.now(),
+        });
+      }
+    } catch (socketErr) {
+      console.warn("[socket] Failed to emit violation:new", socketErr.message);
+    }
+
 
     // Check if auto-submit threshold reached
     const shouldAutoSubmit = submission.violationCount >= 3;

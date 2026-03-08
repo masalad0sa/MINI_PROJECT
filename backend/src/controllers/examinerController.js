@@ -1,4 +1,5 @@
-import { Exam, Submission } from "../models/examiner.js";
+import Exam from "../models/Exam.js";
+import Submission from "../models/Submission.js";
 
 const SEVERITY_WEIGHTS = {
   CRITICAL: 25,
@@ -469,6 +470,35 @@ export const takeSubmissionAction = async (req, res) => {
     submission.lastInterventionAt = now;
 
     await submission.save();
+
+    // Emit real-time examiner:action event to both namespaces
+    try {
+      const io = req.app.get("io");
+      const examId = submission.examId?._id?.toString() || submission.examId?.toString();
+      const eventData = {
+        submissionId: submission._id,
+        studentId: submission.studentId?.toString(),
+        actionId,
+        actionType,
+        note: normalizedNote,
+        controlState: submission.controlState || "ACTIVE",
+        previousControlState,
+        newControlState: nextControlState,
+        actorName: req.user.name,
+        timestamp: Date.now(),
+      };
+
+      // Notify the monitor dashboard (examiner / admin)
+      if (io?.monitorNs && examId) {
+        io.monitorNs.to(`exam:${examId}`).emit("examiner:action", eventData);
+      }
+      // Notify the student's exam session
+      if (io?.examNs && examId) {
+        io.examNs.to(`exam:${examId}`).emit("examiner:action", eventData);
+      }
+    } catch (socketErr) {
+      console.warn("[socket] Failed to emit examiner:action", socketErr.message);
+    }
 
     res.status(200).json({
       success: true,

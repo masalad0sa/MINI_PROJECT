@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader,
+  ShieldCheck,
 } from "lucide-react";
 import * as Progress from "@radix-ui/react-progress";
 import { useAuth } from "../../lib/AuthContext";
@@ -20,20 +21,25 @@ export function PreExamCheck() {
   const [webcamReady, setWebcamReady] = useState(false);
   const [faceDetected, setFaceDetected] = useState<boolean | null>(null);
   const [internet, setInternet] = useState(true);
+  const [aiServiceReady, setAiServiceReady] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
     // Check internet connection
     const checkInternet = async () => {
+      if (!navigator.onLine) {
+        setInternet(false);
+        return;
+      }
+
+      const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
       try {
-        await fetch(
-          import.meta.env.VITE_API_BASE + "/health",
-          {
-            method: "GET",
-            mode: "no-cors",
-          },
-        );
+        await fetch(`${API_BASE}/health`, {
+          method: "GET",
+          // Removing no-cors so we actually get a proper response we can verify if needed,
+          // though the backend has CORS enabled anyway.
+        });
         setInternet(true);
       } catch (err) {
         setInternet(false);
@@ -42,6 +48,27 @@ export function PreExamCheck() {
 
     checkInternet();
     const interval = setInterval(checkInternet, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Check AI proctoring service health
+  useEffect(() => {
+    const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:5000/api";
+    const checkAI = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/proctoring/health`);
+        if (res.ok) {
+          const data = await res.json();
+          setAiServiceReady(data?.success === true);
+        } else {
+          setAiServiceReady(false);
+        }
+      } catch {
+        setAiServiceReady(false);
+      }
+    };
+    checkAI();
+    const interval = setInterval(checkAI, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -57,6 +84,11 @@ export function PreExamCheck() {
       icon: User,
     },
     { label: "Internet", status: internet ? "OK" : "Failed", icon: Wifi },
+    {
+      label: "AI Proctoring",
+      status: aiServiceReady === null ? "Pending" : aiServiceReady ? "OK" : "Failed",
+      icon: ShieldCheck,
+    },
   ];
 
   const allChecksPassed = checklistItems.every((item) => item.status === "OK");

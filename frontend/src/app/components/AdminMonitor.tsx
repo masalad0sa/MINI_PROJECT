@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   User,
@@ -13,9 +13,12 @@ import {
   RefreshCw,
   Monitor,
   ExternalLink,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import * as api from "../../lib/api";
 import { useAuth } from "../../lib/AuthContext";
+import { useSocket } from "../../hooks/useSocket";
 
 export function AdminMonitor() {
   const { user } = useAuth();
@@ -31,6 +34,11 @@ export function AdminMonitor() {
   const [refreshing, setRefreshing] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string>("");
+  const [realtimeEvents, setRealtimeEvents] = useState<any[]>([]);
+
+  // Socket.IO connection for real-time updates
+  const { socket, isConnected } = useSocket({ namespace: "/monitor" });
+  const prevExamIdRef = useRef<string>("");
 
   const loadExams = useCallback(
     async (showLoader = false) => {
@@ -83,10 +91,80 @@ export function AdminMonitor() {
     }
   }, [selectedExamId]);
 
+  // Join/leave socket rooms when exam selection changes
+  useEffect(() => {
+    if (!socket || !isConnected) return;
+
+    // Leave previous room
+    if (prevExamIdRef.current) {
+      socket.emit("leave:exam", prevExamIdRef.current);
+    }
+
+    // Join new room
+    if (selectedExamId) {
+      socket.emit("join:exam", selectedExamId);
+      prevExamIdRef.current = selectedExamId;
+    }
+  }, [socket, isConnected, selectedExamId]);
+
+  // Listen for real-time socket events
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleViolation = (data: any) => {
+      console.log("[socket] violation:new", data);
+      setRealtimeEvents((prev) => [
+        { type: "violation", ...data, receivedAt: Date.now() },
+        ...prev.slice(0, 49), // Keep last 50
+      ]);
+      // Refresh full data to get updated states
+      loadMonitorData();
+    };
+
+    const handleStudentJoined = (data: any) => {
+      console.log("[socket] student:joined", data);
+      setRealtimeEvents((prev) => [
+        { type: "joined", ...data, receivedAt: Date.now() },
+        ...prev.slice(0, 49),
+      ]);
+      loadMonitorData();
+    };
+
+    const handleStudentLeft = (data: any) => {
+      console.log("[socket] student:left", data);
+      setRealtimeEvents((prev) => [
+        { type: "left", ...data, receivedAt: Date.now() },
+        ...prev.slice(0, 49),
+      ]);
+      loadMonitorData();
+    };
+
+    const handleExaminerAction = (data: any) => {
+      console.log("[socket] examiner:action", data);
+      setRealtimeEvents((prev) => [
+        { type: "action", ...data, receivedAt: Date.now() },
+        ...prev.slice(0, 49),
+      ]);
+      loadMonitorData();
+    };
+
+    socket.on("violation:new", handleViolation);
+    socket.on("student:joined", handleStudentJoined);
+    socket.on("student:left", handleStudentLeft);
+    socket.on("examiner:action", handleExaminerAction);
+
+    return () => {
+      socket.off("violation:new", handleViolation);
+      socket.off("student:joined", handleStudentJoined);
+      socket.off("student:left", handleStudentLeft);
+      socket.off("examiner:action", handleExaminerAction);
+    };
+  }, [socket, loadMonitorData]);
+
   useEffect(() => {
     loadMonitorData();
-    // Auto-refresh every 10 seconds
-    const interval = setInterval(loadMonitorData, 10000);
+    // Slower fallback poll since we have real-time updates now
+    const interval = setInterval(loadMonitorData, 30000);
     return () => clearInterval(interval);
   }, [loadMonitorData]);
 

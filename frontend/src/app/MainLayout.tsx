@@ -68,7 +68,7 @@ export function MainLayout() {
     ];
 
     // Admins see all screens
-    if (user?.role === "admin" || user?.role === "moderator") {
+    if (user?.role === "admin") {
       return [...studentItems, ...examinerAdminItems, ...adminItems];
     }
     // Examiners see examiner dashboard + create exam

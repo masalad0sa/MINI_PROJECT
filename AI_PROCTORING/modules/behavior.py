@@ -13,10 +13,12 @@ class BehaviorAnalyzer:
 
     def analyze(self, gaze, head):
         now = time.time()
-        elapsed = max(0.1, now - self.last_update)
+        raw_elapsed = max(0.1, now - self.last_update)
+        # Cap elapsed so decay works correctly at any frame rate (1 FPS web, 30 FPS local).
+        elapsed = min(raw_elapsed, 0.5)
         self.last_update = now
 
-        gaze_abnormal = gaze != "LOOKING CENTER"
+        gaze_abnormal = gaze not in {"LOOKING CENTER"}
         head_hard_abnormal = head in {
             "HEAD TURN LEFT",
             "HEAD TURN RIGHT",
@@ -37,16 +39,13 @@ class BehaviorAnalyzer:
             self.abnormal_streak += 1
             self.normal_streak = 0
 
-            # Guard against jitter: require sustained abnormal frames and rate-limit increments.
-            can_increment = (
-                self.abnormal_streak >= 2
-                and now - self.last_increment_at >= 1.5
-            )
+            # At low FPS (web), we only get ~1 frame/sec, so lower the jitter threshold.
+            can_increment = self.abnormal_streak >= 1
             if can_increment:
                 increment = 0.9
                 if gaze_abnormal and head_abnormal:
                     increment += 0.8
-                if self.abnormal_streak >= 5:
+                if self.abnormal_streak >= 3:
                     increment += 0.7
 
                 self.suspicion_score = min(100.0, self.suspicion_score + increment)

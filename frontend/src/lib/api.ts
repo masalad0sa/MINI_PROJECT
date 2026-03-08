@@ -71,7 +71,6 @@ export async function register(
     return res.json();
   } catch (err) {
     console.error("API Register Error:", err);
-    console.log("Arguments:", { email, password, name, userId, role });
     throw err;
   }
 }

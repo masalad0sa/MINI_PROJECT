@@ -109,7 +109,6 @@ export function UserManagement() {
     switch (role) {
       case "admin": return "bg-purple-100 text-purple-700";
       case "examiner": return "bg-blue-100 text-blue-700";
-      case "moderator": return "bg-indigo-100 text-indigo-700";
       default: return "bg-green-100 text-green-700";
     }
   };

@@ -137,8 +137,6 @@ export const processFrame = async (req, res) => {
     const resolvedSessionId =
       sessionId || `${examId || "unknown"}:${req.ip || "local"}`;
 
-    console.log(`[Proctoring] Received frame for exam ${examId}`); // DEBUG LOG
-
     if (!image) {
       console.error('[Proctoring] No image data received');
       return res.status(400).json({ message: 'Image data is required' });
@@ -156,6 +154,7 @@ export const processFrame = async (req, res) => {
         image,
         session_id: resolvedSessionId,
         exam_id: examId || null,
+        objects_only: Boolean(req.body.objectsOnly),
       }, {
         timeout: 12000,
       });
@@ -259,6 +258,35 @@ export const getProctoringHealth = async (_req, res) => {
         python: "unreachable",
         error: pythonDetail,
       },
+    });
+  }
+};
+
+/**
+ * Lightweight system-check endpoint for pre-exam face detection.
+ * Does NOT create persistent AI session state — avoids memory leaks.
+ */
+export const systemCheckFrame = async (req, res) => {
+  try {
+    const { image } = req.body;
+    if (!image) {
+      return res.status(400).json({ message: "Image data is required" });
+    }
+
+    const response = await axios.post(
+      `${PYTHON_SERVICE_URL}/system_check`,
+      { image },
+      { timeout: 8000 },
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    const detail =
+      error?.response?.data || error?.message || "Unknown error";
+    console.error("[SystemCheck] Python error:", detail);
+    res.status(503).json({
+      message: "AI service unavailable for system check",
+      error: detail,
     });
   }
 };

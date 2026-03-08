@@ -12,7 +12,6 @@ export function LoginScreen() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError("");
-    console.log("Login attempt:", { email, password });
     try {
       await login(email, password);
     } catch (err) {

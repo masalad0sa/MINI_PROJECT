@@ -1,4 +1,6 @@
-import { User, Exam, Submission } from "../models/admin.js";
+import User from "../models/User.js";
+import Exam from "../models/Exam.js";
+import Submission from "../models/Submission.js";
 
 export const getAdminDashboard = async (req, res) => {
   try {
