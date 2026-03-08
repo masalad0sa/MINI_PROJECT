@@ -38,7 +38,11 @@ export function WebcamPreview({
 
     const detectFace = async () => {
       const video = videoRef.current;
-      if (!video || !ctx || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      if (
+        !video ||
+        !ctx ||
+        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+      ) {
         return;
       }
 
@@ -47,11 +51,14 @@ export function WebcamPreview({
       const image = canvas.toDataURL("image/jpeg", 0.7);
 
       try {
-        const response = await fetch(`${API_BASE}/proctoring/system-check/frame`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image }),
-        });
+        const response = await fetch(
+          `${API_BASE}/proctoring/system-check/frame`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image }),
+          },
+        );
 
         if (!response.ok) {
           if (!cancelled) {

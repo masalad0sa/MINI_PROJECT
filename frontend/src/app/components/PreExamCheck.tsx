@@ -206,7 +206,8 @@ export function PreExamCheck() {
     return <AlertCircle className="w-5 h-5 text-red-500" />;
   };
 
-  const canStartExam = allChecksPassed && (calibrationDone || calibrationBaselines !== null);
+  const canStartExam =
+    allChecksPassed && (calibrationDone || calibrationBaselines !== null);
 
   const handleStartExam = async () => {
     if (!examId) return;

@@ -237,10 +237,14 @@ export const useProctoring = (
           const shouldLog = Boolean(
             data.should_log_violation || data.should_notify_violation,
           );
-          const highConfObjects: string[] = Array.isArray(data.high_confidence_objects)
+          const highConfObjects: string[] = Array.isArray(
+            data.high_confidence_objects,
+          )
             ? data.high_confidence_objects
             : [];
-          const confirmedObjects: string[] = Array.isArray(data.confirmed_objects)
+          const confirmedObjects: string[] = Array.isArray(
+            data.confirmed_objects,
+          )
             ? data.confirmed_objects
             : [];
 

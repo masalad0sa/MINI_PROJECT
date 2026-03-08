@@ -13,7 +13,11 @@ import {
 } from "lucide-react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as api from "../../lib/api";
-import { useBrowserSecurity, ViolationType, ViolationSeverity } from "../../hooks/useBrowserSecurity";
+import {
+  useBrowserSecurity,
+  ViolationType,
+  ViolationSeverity,
+} from "../../hooks/useBrowserSecurity";
 import { useProctoring, ViolationEvent } from "../../hooks/useProctoring";
 import { WarningModal } from "./WarningModal";
 
@@ -34,7 +38,7 @@ export function ActiveExam() {
   const [showResults, setShowResults] = useState(false);
   const [results, setResults] = useState<any>(null);
   const [timeLeft, setTimeLeft] = useState(0);
-  
+
   // Webcam refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -44,10 +48,10 @@ export function ActiveExam() {
   // Security violation state
   const [violationCount, setViolationCount] = useState(0);
   const [showSecurityWarning, setShowSecurityWarning] = useState(false);
-  const [lastViolationType, setLastViolationType] = useState<string>("TAB_SWITCH");
-  const [lastViolationDescription, setLastViolationDescription] = useState<string>(
-    "A security violation was detected.",
-  );
+  const [lastViolationType, setLastViolationType] =
+    useState<string>("TAB_SWITCH");
+  const [lastViolationDescription, setLastViolationDescription] =
+    useState<string>("A security violation was detected.");
   const [securityEnabled, setSecurityEnabled] = useState(false);
   const [sessionControlState, setSessionControlState] = useState<
     "ACTIVE" | "PAUSED" | "TERMINATED"
@@ -71,7 +75,10 @@ export function ActiveExam() {
         controlState === "PAUSED" && pauseStartedAt
           ? Math.max(0, nowMs - new Date(pauseStartedAt).getTime())
           : 0;
-      const elapsedMs = Math.max(0, nowMs - startedMs - (totalPausedMs || 0) - activePauseMs);
+      const elapsedMs = Math.max(
+        0,
+        nowMs - startedMs - (totalPausedMs || 0) - activePauseMs,
+      );
       const remaining = durationMinutes * 60 - Math.floor(elapsedMs / 1000);
       return Math.max(0, remaining);
     },
@@ -112,9 +119,6 @@ export function ActiveExam() {
 
   // Attach stream to video element when it becomes available
 
-
-
-
   // Submit handler (memoized for auto-submit) - must be before handleViolation
   const handleSubmit = useCallback(async () => {
     if (submitting || showResults) return;
@@ -127,17 +131,17 @@ export function ActiveExam() {
 
       const submitId = sessionId;
       if (!submitId) {
-          console.error("[ActiveExam] No session ID found. Cannot submit.");
-          alert("Critical Error: No active exam session. Submission failed.");
-          setSubmitting(false);
-          return;
+        console.error("[ActiveExam] No session ID found. Cannot submit.");
+        alert("Critical Error: No active exam session. Submission failed.");
+        setSubmitting(false);
+        return;
       }
       const res = await api.submitExam(submitId, formattedAnswers);
 
       if (res?.success) {
         setResults(res.data);
         setShowResults(true);
-        
+
         // Stop webcam
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((track) => track.stop());
@@ -147,8 +151,8 @@ export function ActiveExam() {
           document.exitFullscreen().catch(() => {});
         }
       } else {
-          console.error("[ActiveExam] Submission failed:", res);
-          alert("Submission failed: " + res?.message);
+        console.error("[ActiveExam] Submission failed:", res);
+        alert("Submission failed: " + res?.message);
       }
     } catch (err) {
       console.error("Failed to submit exam:", err);
@@ -165,90 +169,100 @@ export function ActiveExam() {
   const lastViolationByType = useRef<Record<string, number>>({});
 
   // Handle security violations
-  const handleViolation = useCallback(async (violation: {
-    type: ViolationType | string;
-    severity: ViolationSeverity | string;
-    description: string;
-    evidence?: string;
-  }) => {
-    if (!sessionId || showResults || hasAutoSubmitted.current) return;
+  const handleViolation = useCallback(
+    async (violation: {
+      type: ViolationType | string;
+      severity: ViolationSeverity | string;
+      description: string;
+      evidence?: string;
+    }) => {
+      if (!sessionId || showResults || hasAutoSubmitted.current) return;
 
-    const now = Date.now();
-    const violationKey = String(violation.type || "UNKNOWN");
-    const cooldownMs = 8000;
-    const previous = lastViolationByType.current[violationKey] || 0;
-    if (now - previous < cooldownMs) {
-      return;
-    }
-
-    // Map AI violation types to known types if possible, or pass string
-    const type = violation.type as ViolationType; 
-    const severity = violation.severity as ViolationSeverity;
-
-    try {
-      // Logic: Show Warning Modal first? For now, we log but with debounce.
-      
-      const res = await api.logViolation(
-        sessionId,
-        type,
-        severity,
-        violation.description,
-        violation.evidence // Pass evidence image
-      );
-
-      if (res?.success) {
-        lastViolationByType.current[violationKey] = now;
-        setViolationCount(res.data.violationCount);
-        setLastViolationType(violation.type);
-        setLastViolationDescription(violation.description || "A security violation was detected.");
-        setShowSecurityWarning(true);
-
-        if (res.data.shouldAutoSubmit && !hasAutoSubmitted.current) {
-          console.warn("[ActiveExam] Auto-submitting due to violations...");
-          hasAutoSubmitted.current = true;
-          // Wait 3 seconds then submit
-          setTimeout(() => handleSubmit(), 3000);
-        }
+      const now = Date.now();
+      const violationKey = String(violation.type || "UNKNOWN");
+      const cooldownMs = 8000;
+      const previous = lastViolationByType.current[violationKey] || 0;
+      if (now - previous < cooldownMs) {
+        return;
       }
-    } catch (err) {
-      console.error("Failed to log violation:", err);
-    }
-  }, [sessionId, showResults, handleSubmit]);
 
-  const handleAIViolation = useCallback((event: ViolationEvent) => {
+      // Map AI violation types to known types if possible, or pass string
+      const type = violation.type as ViolationType;
+      const severity = violation.severity as ViolationSeverity;
+
+      try {
+        // Logic: Show Warning Modal first? For now, we log but with debounce.
+
+        const res = await api.logViolation(
+          sessionId,
+          type,
+          severity,
+          violation.description,
+          violation.evidence, // Pass evidence image
+        );
+
+        if (res?.success) {
+          lastViolationByType.current[violationKey] = now;
+          setViolationCount(res.data.violationCount);
+          setLastViolationType(violation.type);
+          setLastViolationDescription(
+            violation.description || "A security violation was detected.",
+          );
+          setShowSecurityWarning(true);
+
+          if (res.data.shouldAutoSubmit && !hasAutoSubmitted.current) {
+            console.warn("[ActiveExam] Auto-submitting due to violations...");
+            hasAutoSubmitted.current = true;
+            // Wait 3 seconds then submit
+            setTimeout(() => handleSubmit(), 3000);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to log violation:", err);
+      }
+    },
+    [sessionId, showResults, handleSubmit],
+  );
+
+  const handleAIViolation = useCallback(
+    (event: ViolationEvent) => {
       if (!sessionId || showResults || hasAutoSubmitted.current) return;
 
       let severity: ViolationSeverity = "MEDIUM";
       let description = "Suspicious behavior detected";
       let type = "AI_FLAG";
       const detectedObjects = Array.isArray(event.detectedObjects)
-        ? event.detectedObjects.filter((value) => value && value.trim().length > 0)
+        ? event.detectedObjects.filter(
+            (value) => value && value.trim().length > 0,
+          )
         : [];
 
-      switch(event.type) {
-          case "MULTIPLE_FACES":
-              severity = "CRITICAL";
-              description = "Multiple faces detected in webcam feed";
-              type = "MULTIPLE_FACES";
-              break;
-          case "PROHIBITED_OBJECT":
-              severity = "CRITICAL";
-              description =
-                detectedObjects.length > 0
-                  ? `Prohibited object detected: ${detectedObjects.join(", ")}`
-                  : "Prohibited object detected in webcam feed";
-              type = "PROHIBITED_OBJECT";
-              break;
-          case "NO_FACE":
-              severity = "CRITICAL";
-              description = "No face detected — ensure your face is visible in the camera";
-              type = "NO_FACE";
-              break;
-          case "HIGH_SUSPICION":
-              description = "Sustained suspicious behavior detected (looking away, head turning)";
-              severity = "CRITICAL";
-              type = "HIGH_SUSPICION";
-              break;
+      switch (event.type) {
+        case "MULTIPLE_FACES":
+          severity = "CRITICAL";
+          description = "Multiple faces detected in webcam feed";
+          type = "MULTIPLE_FACES";
+          break;
+        case "PROHIBITED_OBJECT":
+          severity = "CRITICAL";
+          description =
+            detectedObjects.length > 0
+              ? `Prohibited object detected: ${detectedObjects.join(", ")}`
+              : "Prohibited object detected in webcam feed";
+          type = "PROHIBITED_OBJECT";
+          break;
+        case "NO_FACE":
+          severity = "CRITICAL";
+          description =
+            "No face detected — ensure your face is visible in the camera";
+          type = "NO_FACE";
+          break;
+        case "HIGH_SUSPICION":
+          description =
+            "Sustained suspicious behavior detected (looking away, head turning)";
+          severity = "CRITICAL";
+          type = "HIGH_SUSPICION";
+          break;
       }
       if (event.description && event.description.trim().length > 0) {
         description = event.description.trim();
@@ -276,12 +290,14 @@ export function ActiveExam() {
 
       // Otherwise, log to backend and show warning
       handleViolation({
-          type, 
-          severity,
-          description,
-          evidence: event.evidence
+        type,
+        severity,
+        description,
+        evidence: event.evidence,
       });
-  }, [handleSubmit, handleViolation, sessionId, showResults]);
+    },
+    [handleSubmit, handleViolation, sessionId, showResults],
+  );
 
   const proctoringState = useProctoring(videoRef, handleAIViolation, {
     examId,
@@ -292,7 +308,12 @@ export function ActiveExam() {
 
   // Attach stream to video element when it becomes available
   useEffect(() => {
-    if (!loading && !proctoringState.isModelLoading && videoRef.current && streamRef.current) {
+    if (
+      !loading &&
+      !proctoringState.isModelLoading &&
+      videoRef.current &&
+      streamRef.current
+    ) {
       videoRef.current.srcObject = streamRef.current;
     }
   }, [loading, proctoringState.isModelLoading]);
@@ -313,7 +334,8 @@ export function ActiveExam() {
             "ACTIVE") as "ACTIVE" | "PAUSED" | "TERMINATED";
           setSessionControlState(initialControlState);
           setLockedByExaminer(
-            initialControlState === "PAUSED" || initialControlState === "TERMINATED",
+            initialControlState === "PAUSED" ||
+              initialControlState === "TERMINATED",
           );
           setTimeLeft(
             calculateRemainingSeconds(
@@ -330,7 +352,9 @@ export function ActiveExam() {
           setExam(null);
           setLoading(false);
           // Show error to user
-          alert("Failed to start exam session. Please try again or contact support.");
+          alert(
+            "Failed to start exam session. Please try again or contact support.",
+          );
           navigate("/dashboard");
         }
       } catch (err) {
@@ -339,12 +363,11 @@ export function ActiveExam() {
         setLoading(false);
       }
     }
-    
+
     if (examId) {
-        loadExam();
+      loadExam();
     }
   }, [examId, navigate, calculateRemainingSeconds]);
-
 
   // Browser security hook - ENABLED
   useBrowserSecurity({
@@ -381,8 +404,10 @@ export function ActiveExam() {
           setViolationCount(data.violationCount);
         }
 
-        const controlState = (data.controlState ||
-          "ACTIVE") as "ACTIVE" | "PAUSED" | "TERMINATED";
+        const controlState = (data.controlState || "ACTIVE") as
+          | "ACTIVE"
+          | "PAUSED"
+          | "TERMINATED";
         setSessionControlState(controlState);
         setLockedByExaminer(
           controlState === "PAUSED" || controlState === "TERMINATED",
@@ -422,10 +447,14 @@ export function ActiveExam() {
               setExaminerNotice(`Exam resumed by ${actor}${note}.`);
               break;
             case "MARK_FALSE_POSITIVE":
-              setExaminerNotice(`Previous flag marked false positive by ${actor}.`);
+              setExaminerNotice(
+                `Previous flag marked false positive by ${actor}.`,
+              );
               break;
             case "TERMINATE":
-              setExaminerNotice(`Exam terminated by ${actor}${note}. Submitting...`);
+              setExaminerNotice(
+                `Exam terminated by ${actor}${note}. Submitting...`,
+              );
               if (!hasAutoSubmitted.current && !showResults) {
                 hasAutoSubmitted.current = true;
                 setTimeout(() => handleSubmit(), 500);
@@ -455,7 +484,14 @@ export function ActiveExam() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [sessionId, loading, showResults, handleSubmit, exam?.duration, calculateRemainingSeconds]);
+  }, [
+    sessionId,
+    loading,
+    showResults,
+    handleSubmit,
+    exam?.duration,
+    calculateRemainingSeconds,
+  ]);
 
   // Send heartbeats so examiner can see online/offline status.
   useEffect(() => {
@@ -466,8 +502,10 @@ export function ActiveExam() {
       try {
         const res = await api.postStudentExamHeartbeat(sessionId);
         if (cancelled || !res?.success) return;
-        const controlState = (res.data?.controlState ||
-          "ACTIVE") as "ACTIVE" | "PAUSED" | "TERMINATED";
+        const controlState = (res.data?.controlState || "ACTIVE") as
+          | "ACTIVE"
+          | "PAUSED"
+          | "TERMINATED";
         setSessionControlState(controlState);
         setLockedByExaminer(
           controlState === "PAUSED" || controlState === "TERMINATED",
@@ -607,9 +645,12 @@ export function ActiveExam() {
             <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4 flex items-center gap-4">
               <ShieldAlert className="w-8 h-8 text-red-600" />
               <div>
-                <h3 className="font-bold text-red-700">Auto-Submitted Due to Violations</h3>
+                <h3 className="font-bold text-red-700">
+                  Auto-Submitted Due to Violations
+                </h3>
                 <p className="text-red-600 text-sm">
-                  Your exam was automatically submitted due to exceeding the violation threshold.
+                  Your exam was automatically submitted due to exceeding the
+                  violation threshold.
                 </p>
               </div>
             </div>
@@ -635,7 +676,9 @@ export function ActiveExam() {
               >
                 {results?.passed ? "Exam Passed!" : "Exam Failed"}
               </h1>
-              <p className="text-slate-500">{results?.examTitle || exam.title}</p>
+              <p className="text-slate-500">
+                {results?.examTitle || exam.title}
+              </p>
             </div>
 
             {/* Score Section */}
@@ -673,15 +716,19 @@ export function ActiveExam() {
             </div>
 
             {/* Integrity Status */}
-            <div className={`rounded-lg p-4 mb-6 ${
-              results?.isSuspicious 
-                ? "bg-red-50 border border-red-200" 
-                : "bg-green-50 border border-green-200"
-            }`}>
+            <div
+              className={`rounded-lg p-4 mb-6 ${
+                results?.isSuspicious
+                  ? "bg-red-50 border border-red-200"
+                  : "bg-green-50 border border-green-200"
+              }`}
+            >
               <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                  results?.isSuspicious ? "bg-red-100" : "bg-green-100"
-                }`}>
+                <div
+                  className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                    results?.isSuspicious ? "bg-red-100" : "bg-green-100"
+                  }`}
+                >
                   {results?.isSuspicious ? (
                     <ShieldAlert className="w-5 h-5 text-red-600" />
                   ) : (
@@ -689,14 +736,20 @@ export function ActiveExam() {
                   )}
                 </div>
                 <div>
-                  <h3 className={`font-semibold ${
-                    results?.isSuspicious ? "text-red-700" : "text-green-700"
-                  }`}>
-                    {results?.isSuspicious ? "Flagged as Suspicious" : "Clean Submission"}
+                  <h3
+                    className={`font-semibold ${
+                      results?.isSuspicious ? "text-red-700" : "text-green-700"
+                    }`}
+                  >
+                    {results?.isSuspicious
+                      ? "Flagged as Suspicious"
+                      : "Clean Submission"}
                   </h3>
-                  <p className={`text-sm ${
-                    results?.isSuspicious ? "text-red-600" : "text-green-600"
-                  }`}>
+                  <p
+                    className={`text-sm ${
+                      results?.isSuspicious ? "text-red-600" : "text-green-600"
+                    }`}
+                  >
                     {results?.violationCount || 0} violation(s) recorded
                   </p>
                 </div>
@@ -730,8 +783,12 @@ export function ActiveExam() {
                         {index + 1}
                       </div>
                       <div>
-                        <p className="font-medium">{getViolationLabel(violation.type)}</p>
-                        <p className="text-xs opacity-75">{violation.description}</p>
+                        <p className="font-medium">
+                          {getViolationLabel(violation.type)}
+                        </p>
+                        <p className="text-xs opacity-75">
+                          {violation.description}
+                        </p>
                       </div>
                     </div>
                     <div className="text-right">
@@ -762,8 +819,6 @@ export function ActiveExam() {
     );
   }
 
-
-
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Top Bar */}
@@ -789,11 +844,13 @@ export function ActiveExam() {
           </div>
           {/* Violation Counter */}
           {violationCount > 0 && (
-            <div className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
-              violationCount >= 2 
-                ? "bg-red-500/30 border border-red-300/50" 
-                : "bg-yellow-500/30 border border-yellow-300/50"
-            }`}>
+            <div
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg ${
+                violationCount >= 2
+                  ? "bg-red-500/30 border border-red-300/50"
+                  : "bg-yellow-500/30 border border-yellow-300/50"
+              }`}
+            >
               <ShieldAlert className="w-4 h-4" />
               <span className="text-sm font-medium">
                 {violationCount}/3 Violations
@@ -823,7 +880,7 @@ export function ActiveExam() {
         violationCount={violationCount}
         onClose={() => {
           setShowSecurityWarning(false);
-          // Do not navigate away automatically. 
+          // Do not navigate away automatically.
           // If auto-submitted, we stay on page to show results (via handleSubmit).
         }}
       />
@@ -863,7 +920,10 @@ export function ActiveExam() {
         {/* Center Panel - Question */}
         <div className="flex-1 overflow-y-auto flex flex-col">
           {/* Webcam Feed - 50% Height Above Questions */}
-          <div className="bg-slate-900 w-full relative shrink-0" style={{ height: '50vh' }}>
+          <div
+            className="bg-slate-900 w-full relative shrink-0"
+            style={{ height: "50vh" }}
+          >
             {webcamError ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-800 text-center p-4">
                 <Camera className="w-8 h-8 text-slate-500 mb-2" />
@@ -877,14 +937,14 @@ export function ActiveExam() {
                     (videoRef as any).current = el;
                     // Attach stream immediately if available
                     if (el && streamRef.current && !el.srcObject) {
-                        el.srcObject = streamRef.current;
+                      el.srcObject = streamRef.current;
                     }
                   }}
                   autoPlay
                   muted
                   playsInline
                   className="w-full h-full object-contain"
-                  style={{ transform: 'scaleX(-1)' }}
+                  style={{ transform: "scaleX(-1)" }}
                 />
                 {/* Debug Canvas Overlay */}
                 {proctoringState.debugCanvas && (
@@ -893,7 +953,7 @@ export function ActiveExam() {
                       if (el && proctoringState.debugCanvas) {
                         el.width = proctoringState.debugCanvas.width;
                         el.height = proctoringState.debugCanvas.height;
-                        const ctx = el.getContext('2d');
+                        const ctx = el.getContext("2d");
                         if (ctx) {
                           // Draw the canvas content normally (don't mirror)
                           // The bounding boxes are already adjusted in the hook
@@ -909,13 +969,15 @@ export function ActiveExam() {
             )}
             {/* AI Proctoring Overlays */}
             <div className="absolute top-4 right-4 flex flex-col gap-2 items-end">
-               <div className="flex items-center gap-2 bg-red-500/90 px-3 py-1.5 rounded-full text-sm shadow-sm">
+              <div className="flex items-center gap-2 bg-red-500/90 px-3 py-1.5 rounded-full text-sm shadow-sm">
                 <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-                <span className="text-white font-bold tracking-wide">LIVE PROCTORING</span>
+                <span className="text-white font-bold tracking-wide">
+                  LIVE PROCTORING
+                </span>
               </div>
               {proctoringState.isModelLoading && (
                 <div className="bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full text-sm text-white flex items-center gap-2 border border-white/10">
-                  <Loader className="w-3 h-3 animate-spin" /> 
+                  <Loader className="w-3 h-3 animate-spin" />
                   <span>Initializing Models...</span>
                 </div>
               )}
@@ -925,98 +987,144 @@ export function ActiveExam() {
                   <span>AI monitoring temporarily unavailable</span>
                 </div>
               )}
-               {!proctoringState.isModelLoading && (
-                 <div className={`px-3 py-1.5 rounded-full text-sm text-white font-bold shadow-sm border border-white/10 ${
-                   proctoringState.riskLevel === 'HIGH' ? 'bg-red-600' : 
-                   proctoringState.riskLevel === 'MEDIUM' ? 'bg-amber-500' : 'bg-green-600'
-                 }`}>
-                   RISK LEVEL: {proctoringState.riskLevel}
-                 </div>
-               )}
+              {!proctoringState.isModelLoading && (
+                <div
+                  className={`px-3 py-1.5 rounded-full text-sm text-white font-bold shadow-sm border border-white/10 ${
+                    proctoringState.riskLevel === "HIGH"
+                      ? "bg-red-600"
+                      : proctoringState.riskLevel === "MEDIUM"
+                        ? "bg-amber-500"
+                        : "bg-green-600"
+                  }`}
+                >
+                  RISK LEVEL: {proctoringState.riskLevel}
+                </div>
+              )}
             </div>
 
             {/* Debug Overlay - Real-time tracking info */}
             <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-md rounded-lg p-3 text-xs text-white font-mono border border-white/10 min-w-[200px]">
-              <div className="text-[10px] text-blue-300 font-bold mb-2 tracking-wider">🔍 TRACKING DEBUG</div>
+              <div className="text-[10px] text-blue-300 font-bold mb-2 tracking-wider">
+                🔍 TRACKING DEBUG
+              </div>
               <div className="space-y-1">
                 <div className="flex justify-between">
                   <span className="text-slate-400">Gaze:</span>
-                  <span className={`font-bold ${proctoringState.gazeDirection !== 'CENTER' ? 'text-yellow-400' : 'text-green-400'}`}>
-                    {proctoringState.gazeDirection === 'CENTER' ? '👁️ CENTER' :
-                     proctoringState.gazeDirection === 'LEFT' ? '👈 LEFT' :
-                     proctoringState.gazeDirection === 'RIGHT' ? '👉 RIGHT' :
-                     proctoringState.gazeDirection === 'UP' ? '👆 UP' : '👇 DOWN'}
+                  <span
+                    className={`font-bold ${proctoringState.gazeDirection !== "CENTER" ? "text-yellow-400" : "text-green-400"}`}
+                  >
+                    {proctoringState.gazeDirection === "CENTER"
+                      ? "👁️ CENTER"
+                      : proctoringState.gazeDirection === "LEFT"
+                        ? "👈 LEFT"
+                        : proctoringState.gazeDirection === "RIGHT"
+                          ? "👉 RIGHT"
+                          : proctoringState.gazeDirection === "UP"
+                            ? "👆 UP"
+                            : "👇 DOWN"}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Head:</span>
-                  <span className={`font-bold ${proctoringState.headPose !== 'CENTER' ? 'text-yellow-400' : 'text-green-400'}`}>
-                    {proctoringState.headPose === 'CENTER' ? '🟢 CENTER' :
-                     proctoringState.headPose === 'LEFT' ? '↩️ LEFT' :
-                     proctoringState.headPose === 'RIGHT' ? '↪️ RIGHT' :
-                     proctoringState.headPose === 'UP' ? '⬆️ UP' : '⬇️ DOWN'}
+                  <span
+                    className={`font-bold ${proctoringState.headPose !== "CENTER" ? "text-yellow-400" : "text-green-400"}`}
+                  >
+                    {proctoringState.headPose === "CENTER"
+                      ? "🟢 CENTER"
+                      : proctoringState.headPose === "LEFT"
+                        ? "↩️ LEFT"
+                        : proctoringState.headPose === "RIGHT"
+                          ? "↪️ RIGHT"
+                          : proctoringState.headPose === "UP"
+                            ? "⬆️ UP"
+                            : "⬇️ DOWN"}
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-400">Faces:</span>
-                  <span className={`font-bold ${proctoringState.facesDetected !== 1 ? 'text-red-400' : 'text-green-400'}`}>
+                  <span
+                    className={`font-bold ${proctoringState.facesDetected !== 1 ? "text-red-400" : "text-green-400"}`}
+                  >
                     {proctoringState.facesDetected}
                   </span>
                 </div>
                 <div className="mt-1.5 pt-1.5 border-t border-white/10">
                   <div className="flex justify-between mb-1">
                     <span className="text-slate-400">Score:</span>
-                    <span className={`font-bold ${
-                      proctoringState.suspicionScore >= 70 ? 'text-red-400' :
-                      proctoringState.suspicionScore >= 45 ? 'text-amber-400' : 'text-green-400'
-                    }`}>{proctoringState.suspicionScore}/100</span>
+                    <span
+                      className={`font-bold ${
+                        proctoringState.suspicionScore >= 70
+                          ? "text-red-400"
+                          : proctoringState.suspicionScore >= 45
+                            ? "text-amber-400"
+                            : "text-green-400"
+                      }`}
+                    >
+                      {proctoringState.suspicionScore}/100
+                    </span>
                   </div>
                   <div className="w-full bg-slate-700 rounded-full h-1.5">
-                    <div 
+                    <div
                       className={`h-1.5 rounded-full transition-all duration-300 ${
-                        proctoringState.suspicionScore >= 70 ? 'bg-red-500' :
-                        proctoringState.suspicionScore >= 45 ? 'bg-amber-500' : 'bg-green-500'
+                        proctoringState.suspicionScore >= 70
+                          ? "bg-red-500"
+                          : proctoringState.suspicionScore >= 45
+                            ? "bg-amber-500"
+                            : "bg-green-500"
                       }`}
                       style={{ width: `${proctoringState.suspicionScore}%` }}
                     ></div>
                   </div>
                 </div>
-                {('abnormalDurationMs' in proctoringState) && (proctoringState as any).abnormalDurationMs > 0 && (
-                  <div className="flex justify-between mt-1">
-                    <span className="text-slate-400">Looking away:</span>
-                    <span className="text-yellow-400 font-bold">
-                      {((proctoringState as any).abnormalDurationMs / 1000).toFixed(1)}s
-                    </span>
+                {"abnormalDurationMs" in proctoringState &&
+                  (proctoringState as any).abnormalDurationMs > 0 && (
+                    <div className="flex justify-between mt-1">
+                      <span className="text-slate-400">Looking away:</span>
+                      <span className="text-yellow-400 font-bold">
+                        {(
+                          (proctoringState as any).abnormalDurationMs / 1000
+                        ).toFixed(1)}
+                        s
+                      </span>
+                    </div>
+                  )}
+              </div>
+              {"suspicionReasons" in proctoringState &&
+                (proctoringState as any).suspicionReasons?.length > 0 &&
+                proctoringState.suspicionScore > 0 && (
+                  <div className="mt-2 pt-2 border-t border-white/10">
+                    <div className="text-[10px] text-red-300 font-bold mb-1">
+                      ⚠️ WHY SCORE IS HIGH:
+                    </div>
+                    {(proctoringState as any).suspicionReasons.map(
+                      (reason: string, i: number) => (
+                        <div key={i} className="text-[10px] text-red-200">
+                          • {reason}
+                        </div>
+                      ),
+                    )}
                   </div>
                 )}
-              </div>
-              {('suspicionReasons' in proctoringState) && (proctoringState as any).suspicionReasons?.length > 0 && proctoringState.suspicionScore > 0 && (
-                <div className="mt-2 pt-2 border-t border-white/10">
-                  <div className="text-[10px] text-red-300 font-bold mb-1">⚠️ WHY SCORE IS HIGH:</div>
-                  {(proctoringState as any).suspicionReasons.map((reason: string, i: number) => (
-                    <div key={i} className="text-[10px] text-red-200">• {reason}</div>
-                  ))}
-                </div>
-              )}
             </div>
-            
+
             {/* Proctoring Warnings */}
-            {(proctoringState.suspicionScore > 0 || proctoringState.prohibitedObjects.length > 0) && (
-                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-2 rounded-full text-center border border-red-500/30 shadow-lg max-w-[90%]">
-                    <p className="text-sm text-white font-medium flex items-center gap-3">
-                        {proctoringState.prohibitedObjects.length > 0 && (
-                          <span className="text-red-400 font-bold flex items-center gap-2">
-                            <ShieldAlert className="w-4 h-4" />
-                            {proctoringState.prohibitedObjects.join(', ')} DETECTED
-                          </span>
-                        )}
-                        {proctoringState.facesDetected !== 1 && (
-                          <span className="text-yellow-400 font-bold border-l border-white/20 pl-3 ml-1">
-                            {proctoringState.facesDetected} FACES VISIBLE
-                          </span>
-                        )}
-                    </p>
-                </div>
+            {(proctoringState.suspicionScore > 0 ||
+              proctoringState.prohibitedObjects.length > 0) && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-black/80 backdrop-blur-md px-6 py-2 rounded-full text-center border border-red-500/30 shadow-lg max-w-[90%]">
+                <p className="text-sm text-white font-medium flex items-center gap-3">
+                  {proctoringState.prohibitedObjects.length > 0 && (
+                    <span className="text-red-400 font-bold flex items-center gap-2">
+                      <ShieldAlert className="w-4 h-4" />
+                      {proctoringState.prohibitedObjects.join(", ")} DETECTED
+                    </span>
+                  )}
+                  {proctoringState.facesDetected !== 1 && (
+                    <span className="text-yellow-400 font-bold border-l border-white/20 pl-3 ml-1">
+                      {proctoringState.facesDetected} FACES VISIBLE
+                    </span>
+                  )}
+                </p>
+              </div>
             )}
           </div>
 
@@ -1141,7 +1249,9 @@ export function ActiveExam() {
                 Status: {lockedByExaminer ? "Locked by Examiner" : "Active"}
               </span>
             </div>
-            <p className={`text-xs ${lockedByExaminer ? "text-red-700" : "text-green-700"}`}>
+            <p
+              className={`text-xs ${lockedByExaminer ? "text-red-700" : "text-green-700"}`}
+            >
               {lockedByExaminer
                 ? "Waiting for examiner action resolution."
                 : "All systems operational"}
