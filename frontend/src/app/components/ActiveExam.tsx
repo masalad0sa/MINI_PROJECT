@@ -919,6 +919,12 @@ export function ActiveExam() {
                   <span>Initializing Models...</span>
                 </div>
               )}
+              {!proctoringState.aiServiceAvailable && (
+                <div className="bg-amber-600/90 backdrop-blur-md px-3 py-1.5 rounded-full text-sm text-white flex items-center gap-2 border border-white/10">
+                  <AlertTriangle className="w-3 h-3" />
+                  <span>AI monitoring temporarily unavailable</span>
+                </div>
+              )}
                {!proctoringState.isModelLoading && (
                  <div className={`px-3 py-1.5 rounded-full text-sm text-white font-bold shadow-sm border border-white/10 ${
                    proctoringState.riskLevel === 'HIGH' ? 'bg-red-600' : 

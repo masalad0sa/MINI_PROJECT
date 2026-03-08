@@ -5,6 +5,8 @@ interface ProctoringState {
   isModelLoading: boolean;
   /** True when browser-side face model failed; server handles all analysis. */
   browserModelFailed: boolean;
+  /** False when the AI backend is unreachable (network error / 5xx). */
+  aiServiceAvailable: boolean;
   facesDetected: number;
   headPose: "CENTER" | "LEFT" | "RIGHT" | "UP" | "DOWN";
   gazeDirection: "CENTER" | "LEFT" | "RIGHT" | "UP" | "DOWN";
@@ -36,6 +38,8 @@ interface UseProctoringOptions {
   captureWidth?: number;
   captureHeight?: number;
   imageQuality?: number;
+  /** Pre-computed gaze/head calibration baselines from PreExamCheck. */
+  calibration?: Record<string, number> | null;
 }
 
 export const useProctoring = (
@@ -59,22 +63,70 @@ export const useProctoring = (
     suspicionScore: number;
     riskLevel: string;
   } | null>(null);
-  const [debugCanvas, setDebugCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [debugCanvas, setDebugCanvas] = useState<HTMLCanvasElement | null>(
+    null,
+  );
 
-  const debugCanvasRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
-  const frameCanvasRef = useRef<HTMLCanvasElement>(document.createElement("canvas"));
+  const debugCanvasRef = useRef<HTMLCanvasElement>(
+    document.createElement("canvas"),
+  );
+  const frameCanvasRef = useRef<HTMLCanvasElement>(
+    document.createElement("canvas"),
+  );
   const proctoringActive = useRef(true);
-  const lastObjectDetectTime = useRef<number>(0);
   const lastViolationByType = useRef<Record<string, number>>({});
-  const objectDetectTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Adaptive frame rate + in-flight guard ──
+  const requestInFlight = useRef(false);
+  const lastRttMs = useRef(1000);
+  const consecutiveErrors = useRef(0);
+  const [aiServiceAvailable, setAiServiceAvailable] = useState(true);
+  const adaptiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Calibration: send with first frame only ──
+  const calibrationSent = useRef(false);
+  const calibrationData = useRef<Record<string, number> | null>(null);
+
+  // Resolve calibration baselines: prop > sessionStorage > null
+  useEffect(() => {
+    if (options.calibration) {
+      calibrationData.current = options.calibration;
+      return;
+    }
+    if (options.examId) {
+      try {
+        const stored = sessionStorage.getItem(`calibration:${options.examId}`);
+        if (stored) calibrationData.current = JSON.parse(stored);
+      } catch {
+        // ignore parse errors
+      }
+    }
+  }, [options.calibration, options.examId]);
+
+  /** Compute next interval: faster when server is fast, slower when slow / erroring. */
+  const getAdaptiveIntervalMs = useCallback(() => {
+    const base = options.objectDetectionIntervalMs ?? 2000;
+    if (consecutiveErrors.current >= 3) return Math.min(base * 3, 10000); // back off heavily
+    if (consecutiveErrors.current >= 1) return Math.min(base * 2, 6000);
+    if (lastRttMs.current < 500) return Math.max(base * 0.75, 1500);
+    if (lastRttMs.current > 3000) return Math.min(base * 2, 5000);
+    return base;
+  }, [options.objectDetectionIntervalMs]);
 
   // ── Send frames to server ──
   // When browser model works: objectsOnly=true (server does YOLO only).
   // When browser model failed: objectsOnly=false (server does full face+gaze+YOLO analysis).
   const detectObjects = useCallback(async () => {
-    if (!videoRef.current || videoRef.current.readyState !== 4 || !proctoringActive.current) {
+    if (
+      !videoRef.current ||
+      videoRef.current.readyState !== 4 ||
+      !proctoringActive.current
+    ) {
       return;
     }
+
+    // Drop frame if previous request still in flight (prevents queue buildup)
+    if (requestInFlight.current) return;
 
     const now = Date.now();
     // If browser model failed, ask server to do full analysis
@@ -96,22 +148,43 @@ export const useProctoring = (
 
         const examRouteId = options.examId || "live";
         const token = localStorage.getItem("token");
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
+        const headers: Record<string, string> = {
+          "Content-Type": "application/json",
+        };
         if (token) {
           headers["Authorization"] = `Bearer ${token}`;
         }
 
-        const response = await fetch(`${apiBase}/proctoring/${examRouteId}/frame`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify({
-            image: imageData,
-            sessionId: options.sessionId || null,
-            objectsOnly: !useServerFallback,
-          }),
-        });
+        requestInFlight.current = true;
+        const startTime = Date.now();
+
+        // Include calibration baselines with the first frame so the server
+        // session starts pre-calibrated for this student's gaze/head position.
+        const bodyObj: Record<string, unknown> = {
+          image: imageData,
+          sessionId: options.sessionId || null,
+          objectsOnly: !useServerFallback,
+        };
+        if (!calibrationSent.current && calibrationData.current) {
+          bodyObj.calibration = calibrationData.current;
+          calibrationSent.current = true;
+        }
+
+        const response = await fetch(
+          `${apiBase}/proctoring/${examRouteId}/frame`,
+          {
+            method: "POST",
+            headers,
+            body: JSON.stringify(bodyObj),
+          },
+        );
+
+        lastRttMs.current = Date.now() - startTime;
 
         if (response.ok) {
+          consecutiveErrors.current = 0;
+          if (!aiServiceAvailable) setAiServiceAvailable(true);
+
           const data = await response.json();
 
           // Update prohibited objects from server
@@ -119,13 +192,27 @@ export const useProctoring = (
           setProhibitedObjects(objects);
 
           // When in server fallback mode, capture face/gaze/score from server
-          if (useServerFallback && typeof data.face_count === "number" && data.face_count >= 0) {
+          if (
+            useServerFallback &&
+            typeof data.face_count === "number" &&
+            data.face_count >= 0
+          ) {
             setServerFaceState({
               faceCount: data.face_count,
-              gazeDirection: typeof data.gaze_direction === "string" ? data.gaze_direction : "LOOKING CENTER",
-              headDirection: typeof data.head_direction === "string" ? data.head_direction : "HEAD STRAIGHT",
-              suspicionScore: typeof data.suspicion_score === "number" ? data.suspicion_score : 0,
-              riskLevel: typeof data.risk_level === "string" ? data.risk_level : "LOW",
+              gazeDirection:
+                typeof data.gaze_direction === "string"
+                  ? data.gaze_direction
+                  : "LOOKING CENTER",
+              headDirection:
+                typeof data.head_direction === "string"
+                  ? data.head_direction
+                  : "HEAD STRAIGHT",
+              suspicionScore:
+                typeof data.suspicion_score === "number"
+                  ? data.suspicion_score
+                  : 0,
+              riskLevel:
+                typeof data.risk_level === "string" ? data.risk_level : "LOW",
             });
           }
 
@@ -144,34 +231,60 @@ export const useProctoring = (
             img.src = data.processed_image;
           }
 
-          // Handle server-side violations (object detection violations)
-          const violationType = typeof data.violation_type === "string" ? data.violation_type : "";
-          const shouldLog = Boolean(data.should_log_violation || data.should_notify_violation);
+          // ── Confidence-aware violation handling ──
+          const violationType =
+            typeof data.violation_type === "string" ? data.violation_type : "";
+          const shouldLog = Boolean(
+            data.should_log_violation || data.should_notify_violation,
+          );
+          const highConfObjects: string[] = Array.isArray(data.high_confidence_objects)
+            ? data.high_confidence_objects
+            : [];
+          const confirmedObjects: string[] = Array.isArray(data.confirmed_objects)
+            ? data.confirmed_objects
+            : [];
+
           if (violationType && shouldLog && onViolation) {
             const cooldownMs = options.violationCooldownMs ?? 8000;
             const lastAt = lastViolationByType.current[violationType] || 0;
             if (now - lastAt >= cooldownMs) {
-              lastViolationByType.current[violationType] = now;
-              onViolation({
-                type: violationType,
-                evidence: data.processed_image || `AI Detected: ${violationType}`,
-                timestamp: now,
-                description: data?.violation_details?.description,
-                detectedObjects: objects,
-                backendLogged: Boolean(data.backend_violation_logged),
-                violationCount: data.backend_violation_count,
-                shouldAutoSubmit: Boolean(data.backend_should_auto_submit),
-              });
+              // For PROHIBITED_OBJECT: only fire if high-confidence OR streak-confirmed
+              const isConfident =
+                violationType !== "PROHIBITED_OBJECT" ||
+                highConfObjects.length > 0 ||
+                confirmedObjects.length > 0;
+
+              if (isConfident) {
+                lastViolationByType.current[violationType] = now;
+                onViolation({
+                  type: violationType,
+                  evidence:
+                    data.processed_image || `AI Detected: ${violationType}`,
+                  timestamp: now,
+                  description: data?.violation_details?.description,
+                  detectedObjects: objects,
+                  backendLogged: Boolean(data.backend_violation_logged),
+                  violationCount: data.backend_violation_count,
+                  shouldAutoSubmit: Boolean(data.backend_should_auto_submit),
+                });
+              }
             }
           }
+        } else {
+          // Non-OK response (4xx/5xx)
+          consecutiveErrors.current++;
+          if (consecutiveErrors.current >= 3) setAiServiceAvailable(false);
         }
       }
     } catch (error) {
+      consecutiveErrors.current++;
+      if (consecutiveErrors.current >= 3) setAiServiceAvailable(false);
       console.error("[Proctoring] Object detection error:", error);
+    } finally {
+      requestInFlight.current = false;
     }
-
-    lastObjectDetectTime.current = now;
   }, [
+    aiServiceAvailable,
     apiBase,
     faceState.modelFailed,
     onViolation,
@@ -184,31 +297,45 @@ export const useProctoring = (
     videoRef,
   ]);
 
-  // ── Run object detection on interval ──
+  // ── Adaptive interval scheduling ──
   useEffect(() => {
     proctoringActive.current = true;
-    const intervalMs = options.objectDetectionIntervalMs ?? 2000;
-    objectDetectTimer.current = setInterval(detectObjects, intervalMs);
+
+    const scheduleNext = () => {
+      if (!proctoringActive.current) return;
+      const intervalMs = getAdaptiveIntervalMs();
+      adaptiveTimerRef.current = setTimeout(async () => {
+        await detectObjects();
+        scheduleNext();
+      }, intervalMs);
+    };
+
+    // Kick off the first frame immediately
+    detectObjects().then(scheduleNext);
 
     return () => {
       proctoringActive.current = false;
-      if (objectDetectTimer.current) clearInterval(objectDetectTimer.current);
+      if (adaptiveTimerRef.current) clearTimeout(adaptiveTimerRef.current);
     };
-  }, [detectObjects, options.objectDetectionIntervalMs]);
+  }, [detectObjects, getAdaptiveIntervalMs]);
 
   // ── Fire violation events for browser-detected issues ──
-  // Only fire violations for SUSTAINED behavior (not quick glances)
+  // Only fire violations for SUSTAINED behavior (not quick glances).
+  // SKIP when browser model failed — server handles all violations in that case.
   useEffect(() => {
-    if (!onViolation) return;
+    if (!onViolation || faceState.modelFailed) return;
 
     const now = Date.now();
     const cooldownMs = options.violationCooldownMs ?? 8000;
     const minDurationMs = 3000; // Must look away for 3s+ before violation
     const reasons = faceState.suspicionReasons || [];
-    const reasonStr = reasons.length > 0 ? ` (${reasons.join(', ')})` : '';
+    const reasonStr = reasons.length > 0 ? ` (${reasons.join(", ")})` : "";
 
     // No face violation — needs to be sustained (3s+ without face)
-    if (faceState.faceCount === 0 && faceState.abnormalDurationMs >= minDurationMs) {
+    if (
+      faceState.faceCount === 0 &&
+      faceState.abnormalDurationMs >= minDurationMs
+    ) {
       const lastAt = lastViolationByType.current["NO_FACE"] || 0;
       if (now - lastAt >= cooldownMs) {
         lastViolationByType.current["NO_FACE"] = now;
@@ -236,7 +363,10 @@ export const useProctoring = (
     }
 
     // High suspicion violation — only when sustained AND score is high
-    if (faceState.suspicionScore >= 70 && faceState.abnormalDurationMs >= minDurationMs) {
+    if (
+      faceState.suspicionScore >= 70 &&
+      faceState.abnormalDurationMs >= minDurationMs
+    ) {
       const lastAt = lastViolationByType.current["HIGH_SUSPICION"] || 0;
       if (now - lastAt >= cooldownMs) {
         lastViolationByType.current["HIGH_SUSPICION"] = now;
@@ -248,13 +378,23 @@ export const useProctoring = (
         });
       }
     }
-  }, [faceState.faceCount, faceState.suspicionScore, faceState.abnormalDurationMs, faceState.suspicionReasons, onViolation, options.violationCooldownMs]);
+  }, [
+    faceState.modelFailed,
+    faceState.faceCount,
+    faceState.suspicionScore,
+    faceState.abnormalDurationMs,
+    faceState.suspicionReasons,
+    onViolation,
+    options.violationCooldownMs,
+  ]);
 
   // ── Combine browser face state with server object detection ──
   // When browser model failed, use server-side face/gaze/score data instead.
   const useFallback = faceState.modelFailed && serverFaceState !== null;
 
-  const mapServerDirection = (dir: string): "CENTER" | "LEFT" | "RIGHT" | "UP" | "DOWN" => {
+  const mapServerDirection = (
+    dir: string,
+  ): "CENTER" | "LEFT" | "RIGHT" | "UP" | "DOWN" => {
     const d = dir.toUpperCase();
     if (d.includes("LEFT")) return "LEFT";
     if (d.includes("RIGHT")) return "RIGHT";
@@ -266,16 +406,26 @@ export const useProctoring = (
   const state: ProctoringState = {
     isModelLoading: faceState.isLoading,
     browserModelFailed: faceState.modelFailed,
-    facesDetected: useFallback ? serverFaceState.faceCount : faceState.faceCount,
-    headPose: useFallback ? mapServerDirection(serverFaceState.headDirection) : faceState.headPose,
-    gazeDirection: useFallback ? mapServerDirection(serverFaceState.gazeDirection) : faceState.gazeDirection,
-    suspicionScore: useFallback ? serverFaceState.suspicionScore : faceState.suspicionScore,
+    aiServiceAvailable,
+    facesDetected: useFallback
+      ? serverFaceState.faceCount
+      : faceState.faceCount,
+    headPose: useFallback
+      ? mapServerDirection(serverFaceState.headDirection)
+      : faceState.headPose,
+    gazeDirection: useFallback
+      ? mapServerDirection(serverFaceState.gazeDirection)
+      : faceState.gazeDirection,
+    suspicionScore: useFallback
+      ? serverFaceState.suspicionScore
+      : faceState.suspicionScore,
     prohibitedObjects,
-    riskLevel: prohibitedObjects.length > 0
-      ? "HIGH"
-      : useFallback
-        ? (serverFaceState.riskLevel as "LOW" | "MEDIUM" | "HIGH")
-        : faceState.riskLevel,
+    riskLevel:
+      prohibitedObjects.length > 0
+        ? "HIGH"
+        : useFallback
+          ? (serverFaceState.riskLevel as "LOW" | "MEDIUM" | "HIGH")
+          : faceState.riskLevel,
     debugCanvas,
     suspicionReasons: useFallback ? [] : faceState.suspicionReasons,
     abnormalDurationMs: useFallback ? 0 : faceState.abnormalDurationMs,

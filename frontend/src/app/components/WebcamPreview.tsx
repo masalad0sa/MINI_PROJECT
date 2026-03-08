@@ -8,13 +8,17 @@ const API_BASE =
 interface WebcamPreviewProps {
   onReady?: () => void;
   onFaceDetectionChange?: (detected: boolean) => void;
+  /** Optional external ref so parent components can capture frames from the same stream. */
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
 }
 
 export function WebcamPreview({
   onReady,
   onFaceDetectionChange,
+  videoRef: externalVideoRef,
 }: WebcamPreviewProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const internalVideoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = externalVideoRef ?? internalVideoRef;
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [faceDetected, setFaceDetected] = useState<boolean | null>(null);

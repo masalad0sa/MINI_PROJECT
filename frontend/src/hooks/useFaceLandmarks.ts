@@ -1,8 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react";
-import {
-  FaceLandmarker,
-  FilesetResolver,
-} from "@mediapipe/tasks-vision";
+import { FaceLandmarker, FilesetResolver } from "@mediapipe/tasks-vision";
 
 export interface FaceTrackingState {
   isLoading: boolean;
@@ -69,10 +66,16 @@ function computeGaze(
 
   try {
     const leftH = irisHorizontalRatio(
-      landmarks, 33, 133, [468, 469, 470, 471, 472],
+      landmarks,
+      33,
+      133,
+      [468, 469, 470, 471, 472],
     );
     const rightH = irisHorizontalRatio(
-      landmarks, 362, 263, [473, 474, 475, 476, 477],
+      landmarks,
+      362,
+      263,
+      [473, 474, 475, 476, 477],
     );
 
     // Skip if eyes too small (e.g. far from camera)
@@ -81,10 +84,16 @@ function computeGaze(
     const hRatio = (leftH.ratio + rightH.ratio) / 2;
 
     const leftV = irisVerticalRatio(
-      landmarks, 159, 145, [468, 469, 470, 471, 472],
+      landmarks,
+      159,
+      145,
+      [468, 469, 470, 471, 472],
     );
     const rightV = irisVerticalRatio(
-      landmarks, 386, 374, [473, 474, 475, 476, 477],
+      landmarks,
+      386,
+      374,
+      [473, 474, 475, 476, 477],
     );
     const vRatio = (leftV + rightV) / 2;
 
@@ -193,7 +202,8 @@ class SuspicionTracker {
     this.reasons = [];
     if (noFace) this.reasons.push("No face visible in camera");
     if (multiFace) this.reasons.push(`${faceCount} faces detected`);
-    if (gazeAbnormal) this.reasons.push(`Eyes looking ${gaze.replace("LOOKING ", "")}`);
+    if (gazeAbnormal)
+      this.reasons.push(`Eyes looking ${gaze.replace("LOOKING ", "")}`);
     if (headAbnormal) this.reasons.push(`Head turned ${head}`);
 
     if (abnormal) {
@@ -358,7 +368,11 @@ export function useFaceLandmarks(
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
 
-    if (video && landmarker && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+    if (
+      video &&
+      landmarker &&
+      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+    ) {
       try {
         const results = landmarker.detectForVideo(video, performance.now());
 

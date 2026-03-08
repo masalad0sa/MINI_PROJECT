@@ -1,5 +1,6 @@
 import base64
 import os
+import statistics
 import sys
 import threading
 import time
@@ -68,6 +69,7 @@ class FrameData(BaseModel):
     session_id: Optional[str] = None
     exam_id: Optional[str] = None
     objects_only: bool = False
+    calibration: Optional[Dict[str, float]] = None
 
 
 class SessionState:
@@ -115,7 +117,7 @@ def _build_session_key(payload: FrameData):
     return "anonymous"
 
 
-def _get_session_state(session_key: str):
+def _get_session_state(session_key: str, calibration: Optional[Dict[str, float]] = None):
     now = time.time()
     with STATE_LOCK:
         stale_keys = [
@@ -131,11 +133,29 @@ def _get_session_state(session_key: str):
             del SESSION_STATES[stale_key]
 
         state = SESSION_STATES.get(session_key)
-        if state is None:
+        is_new = state is None
+        if is_new:
             state = SessionState()
             SESSION_STATES[session_key] = state
 
         state.last_updated = now
+
+        # Apply calibration baselines to new sessions so trackers start
+        # pre-calibrated instead of using the noisy first frame.
+        if is_new and calibration:
+            if "gaze_h_baseline" in calibration:
+                state.gaze_tracker.baseline_h_ratio = calibration["gaze_h_baseline"]
+                state.gaze_tracker.smoothed_h_ratio = calibration["gaze_h_baseline"]
+            if "gaze_v_baseline" in calibration:
+                state.gaze_tracker.baseline_v_ratio = calibration["gaze_v_baseline"]
+                state.gaze_tracker.smoothed_v_ratio = calibration["gaze_v_baseline"]
+            if "head_yaw_baseline" in calibration:
+                state.head_pose.yaw_bias = calibration["head_yaw_baseline"]
+                state.head_pose.smoothed_yaw = calibration["head_yaw_baseline"]
+            if "head_pitch_baseline" in calibration:
+                state.head_pose.pitch_bias = calibration["head_pitch_baseline"]
+                state.head_pose.smoothed_pitch = calibration["head_pitch_baseline"]
+
         return state
 
 
@@ -213,7 +233,7 @@ async def process_frame(data: FrameData):
         h, w, _ = frame.shape
 
         session_key = _build_session_key(data)
-        state = _get_session_state(session_key)
+        state = _get_session_state(session_key, calibration=data.calibration)
         state.frame_count += 1
 
         # 1. Face detection + mesh cross-check.
@@ -429,6 +449,77 @@ async def process_frame(data: FrameData):
     except Exception as error:
         print(f"Error processing frame: {error}")
         raise HTTPException(status_code=500, detail=str(error))
+
+
+class CalibrationData(BaseModel):
+    images: list[str]  # Multiple base64 frames
+
+
+@app.post("/calibrate")
+async def calibrate(data: CalibrationData):
+    """Process multiple frames where the student is looking at screen center.
+    Returns averaged baseline ratios for gaze and head pose so the session
+    trackers can start pre-calibrated instead of relying on the first frame."""
+    if not data.images or len(data.images) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 calibration frames")
+
+    # Use temporary tracker instances so we don't pollute any exam session.
+    temp_mesh = FaceMeshDetector(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+    temp_gaze = EyeGazeTracker()
+    temp_head = HeadPoseEstimator()
+
+    h_ratios: list[float] = []
+    v_ratios: list[float] = []
+    yaw_values: list[float] = []
+    pitch_values: list[float] = []
+    faces_ok = 0
+
+    try:
+        for img_data in data.images[:20]:  # cap at 20 frames
+            try:
+                frame = _decode_frame(img_data)
+                h, w, _ = frame.shape
+                mesh_results = temp_mesh.process(frame)
+                if not mesh_results or not mesh_results.multi_face_landmarks:
+                    continue
+                landmarks = mesh_results.multi_face_landmarks[0].landmark
+                temp_gaze.get_gaze_direction(landmarks, w, h)
+                temp_head.estimate(landmarks)
+
+                if temp_gaze.smoothed_h_ratio is not None:
+                    h_ratios.append(temp_gaze.smoothed_h_ratio)
+                if temp_gaze.smoothed_v_ratio is not None:
+                    v_ratios.append(temp_gaze.smoothed_v_ratio)
+                if temp_head.smoothed_yaw is not None:
+                    yaw_values.append(temp_head.smoothed_yaw)
+                if temp_head.smoothed_pitch is not None:
+                    pitch_values.append(temp_head.smoothed_pitch)
+                faces_ok += 1
+            except Exception:
+                continue
+    finally:
+        try:
+            temp_mesh.face_mesh.close()
+        except Exception:
+            pass
+
+    if faces_ok < 2:
+        raise HTTPException(status_code=422, detail="Could not detect face in enough frames")
+
+    baselines = {
+        "gaze_h_baseline": statistics.mean(h_ratios) if h_ratios else 0.5,
+        "gaze_v_baseline": statistics.mean(v_ratios) if v_ratios else 0.5,
+        "head_yaw_baseline": statistics.mean(yaw_values) if yaw_values else 0.0,
+        "head_pitch_baseline": statistics.mean(pitch_values) if pitch_values else 0.0,
+        "frames_used": faces_ok,
+    }
+    return {"success": True, "baselines": baselines}
 
 
 class SystemCheckData(BaseModel):
