@@ -14,6 +14,7 @@ import * as Progress from "@radix-ui/react-progress";
 import { useAuth } from "../../lib/AuthContext";
 import { WebcamPreview } from "./WebcamPreview";
 import * as api from "../../lib/api";
+import { useFaceLandmarks } from "../../hooks/useFaceLandmarks";
 
 interface CalibrationBaselines {
   gaze_h_baseline: number;
@@ -41,6 +42,7 @@ export function PreExamCheck() {
   const [calibrationBaselines, setCalibrationBaselines] =
     useState<CalibrationBaselines | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
+  const browserModelState = useFaceLandmarks(webcamVideoRef);
 
   useEffect(() => {
     // Check internet connection
@@ -91,30 +93,59 @@ export function PreExamCheck() {
     return () => clearInterval(interval);
   }, []);
 
-  const checklistItems = [
+  const browserModelStatus: "OK" | "Pending" | "Warning" =
+    !webcamReady || browserModelState.isLoading
+      ? "Pending"
+      : browserModelState.modelFailed
+        ? "Warning"
+        : "OK";
+
+  const checklistItems: Array<{
+    label: string;
+    status: "OK" | "Pending" | "Failed" | "Warning";
+    icon: typeof Camera;
+    required: boolean;
+  }> = [
     {
       label: "Webcam",
       status: webcamReady ? "OK" : "Pending",
       icon: Camera,
+      required: true,
     },
     {
       label: "Face Detection",
       status: !webcamReady ? "Pending" : faceDetected ? "OK" : "Failed",
       icon: User,
+      required: true,
     },
-    { label: "Internet", status: internet ? "OK" : "Failed", icon: Wifi },
+    {
+      label: "Internet",
+      status: internet ? "OK" : "Failed",
+      icon: Wifi,
+      required: true,
+    },
     {
       label: "AI Proctoring",
       status:
         aiServiceReady === null ? "Pending" : aiServiceReady ? "OK" : "Failed",
       icon: ShieldCheck,
+      required: true,
+    },
+    {
+      label: "Browser Face Model",
+      status: browserModelStatus,
+      icon: Eye,
+      required: false,
     },
   ];
 
-  const allChecksPassed = checklistItems.every((item) => item.status === "OK");
+  const allChecksPassed = checklistItems
+    .filter((item) => item.required)
+    .every((item) => item.status === "OK");
   const completedChecks = checklistItems.filter(
-    (item) => item.status === "OK",
+    (item) => item.status === "OK" || item.status === "Warning",
   ).length;
+  const aiServiceUnavailable = aiServiceReady === false;
 
   // ── Gaze Calibration ──
   const startCalibration = useCallback(async () => {
@@ -203,6 +234,8 @@ export function PreExamCheck() {
       return <CheckCircle2 className="w-5 h-5 text-green-500" />;
     if (status === "Pending")
       return <Loader className="w-5 h-5 text-yellow-500 animate-spin" />;
+    if (status === "Warning")
+      return <AlertCircle className="w-5 h-5 text-amber-500" />;
     return <AlertCircle className="w-5 h-5 text-red-500" />;
   };
 
@@ -269,6 +302,20 @@ export function PreExamCheck() {
           </p>
         </div>
 
+        {aiServiceUnavailable && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-6 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-red-900">
+                AI Proctoring Unavailable
+              </h3>
+              <p className="text-red-800 text-sm">
+                AI proctoring service unavailable, please try again later.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Error Alert */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 mb-8 flex items-start gap-3">
@@ -322,6 +369,8 @@ export function PreExamCheck() {
                           ? "text-green-600"
                           : item.status === "Pending"
                             ? "text-yellow-600"
+                            : item.status === "Warning"
+                              ? "text-amber-600"
                             : "text-red-600"
                       }`}
                     >
@@ -453,6 +502,8 @@ export function PreExamCheck() {
               ? "Starting Exam..."
               : canStartExam
                 ? "Start Exam"
+                : aiServiceUnavailable
+                  ? "AI service unavailable"
                 : allChecksPassed
                   ? "Complete calibration to continue"
                   : "Complete all checks"}

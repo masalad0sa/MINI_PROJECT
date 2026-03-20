@@ -392,6 +392,7 @@ export function useFaceLandmarks(
 
         setState({
           isLoading: false,
+          modelFailed: false,
           faceCount,
           gazeDirection: gaze,
           headPose: head,

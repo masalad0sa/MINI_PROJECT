@@ -34,12 +34,27 @@ interface UseProctoringOptions {
   sessionId?: string;
   /** How often to send frames to server for object detection (ms). Default 2000. */
   objectDetectionIntervalMs?: number;
+  /** If browser model keeps loading beyond this, use server full analysis. */
+  browserModelLoadTimeoutMs?: number;
+  /** Maximum locally queued frames when network is unstable. */
+  maxQueuedFrames?: number;
+  /** Max retry attempts for one frame before deferring to queue flush retry. */
+  maxRetryAttempts?: number;
   violationCooldownMs?: number;
   captureWidth?: number;
   captureHeight?: number;
   imageQuality?: number;
   /** Pre-computed gaze/head calibration baselines from PreExamCheck. */
   calibration?: Record<string, number> | null;
+}
+
+interface QueuedFrame {
+  image: string;
+  capturedAt: number;
+  useServerFallback: boolean;
+  examRouteId: string;
+  sessionId: string | null;
+  calibration: Record<string, number> | null;
 }
 
 export const useProctoring = (
@@ -82,10 +97,12 @@ export const useProctoring = (
   const consecutiveErrors = useRef(0);
   const [aiServiceAvailable, setAiServiceAvailable] = useState(true);
   const adaptiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [browserModelTimedOut, setBrowserModelTimedOut] = useState(false);
 
   // ── Calibration: send with first frame only ──
   const calibrationSent = useRef(false);
   const calibrationData = useRef<Record<string, number> | null>(null);
+  const frameQueueRef = useRef<QueuedFrame[]>([]);
 
   // Resolve calibration baselines: prop > sessionStorage > null
   useEffect(() => {
@@ -113,9 +130,236 @@ export const useProctoring = (
     return base;
   }, [options.objectDetectionIntervalMs]);
 
-  // ── Send frames to server ──
-  // When browser model works: objectsOnly=true (server does YOLO only).
-  // When browser model failed: objectsOnly=false (server does full face+gaze+YOLO analysis).
+  // If browser model init hangs, fail open into server-side full analysis.
+  useEffect(() => {
+    const timeoutMs = options.browserModelLoadTimeoutMs ?? 12000;
+
+    if (!faceState.isLoading) {
+      setBrowserModelTimedOut(false);
+      return;
+    }
+
+    setBrowserModelTimedOut(false);
+    const timer = setTimeout(() => {
+      setBrowserModelTimedOut(true);
+      console.warn(
+        "[Proctoring] Browser model load timed out; switching to server fallback.",
+      );
+    }, timeoutMs);
+
+    return () => clearTimeout(timer);
+  }, [faceState.isLoading, options.browserModelLoadTimeoutMs]);
+
+  const serverFallbackActive = faceState.modelFailed || browserModelTimedOut;
+
+  // Frame transport: queue + retry + fallback mode handling.
+  const handleServerFrame = useCallback(
+    (data: any, frame: QueuedFrame) => {
+      const objects = Array.isArray(data.objects) ? data.objects : [];
+      setProhibitedObjects(objects);
+
+      if (
+        frame.useServerFallback &&
+        typeof data.face_count === "number" &&
+        data.face_count >= 0
+      ) {
+        setServerFaceState({
+          faceCount: data.face_count,
+          gazeDirection:
+            typeof data.gaze_direction === "string"
+              ? data.gaze_direction
+              : "LOOKING CENTER",
+          headDirection:
+            typeof data.head_direction === "string"
+              ? data.head_direction
+              : "HEAD STRAIGHT",
+          suspicionScore:
+            typeof data.suspicion_score === "number" ? data.suspicion_score : 0,
+          riskLevel:
+            typeof data.risk_level === "string" ? data.risk_level : "LOW",
+        });
+      }
+
+      if (data.processed_image) {
+        const img = new Image();
+        img.onload = () => {
+          const debugCtx = debugCanvasRef.current.getContext("2d");
+          if (debugCtx) {
+            debugCanvasRef.current.width = img.width;
+            debugCanvasRef.current.height = img.height;
+            debugCtx.drawImage(img, 0, 0);
+            setDebugCanvas(debugCanvasRef.current);
+          }
+        };
+        img.src = data.processed_image;
+      }
+
+      const violationType =
+        typeof data.violation_type === "string" ? data.violation_type : "";
+      const shouldLog = Boolean(
+        data.should_log_violation || data.should_notify_violation,
+      );
+      const highConfObjects: string[] = Array.isArray(data.high_confidence_objects)
+        ? data.high_confidence_objects
+        : [];
+      const confirmedObjects: string[] = Array.isArray(data.confirmed_objects)
+        ? data.confirmed_objects
+        : [];
+
+      if (violationType && shouldLog && onViolation) {
+        const cooldownMs = options.violationCooldownMs ?? 8000;
+        const lastAt = lastViolationByType.current[violationType] || 0;
+        if (frame.capturedAt - lastAt >= cooldownMs) {
+          const isConfident =
+            violationType !== "PROHIBITED_OBJECT" ||
+            highConfObjects.length > 0 ||
+            confirmedObjects.length > 0;
+
+          if (isConfident) {
+            lastViolationByType.current[violationType] = frame.capturedAt;
+            onViolation({
+              type: violationType,
+              evidence: data.processed_image || `AI Detected: ${violationType}`,
+              timestamp: frame.capturedAt,
+              description: data?.violation_details?.description,
+              detectedObjects: objects,
+              backendLogged: Boolean(data.backend_violation_logged),
+              violationCount: data.backend_violation_count,
+              shouldAutoSubmit: Boolean(data.backend_should_auto_submit),
+            });
+          }
+        }
+      }
+    },
+    [onViolation, options.violationCooldownMs],
+  );
+
+  const sendQueuedFrame = useCallback(
+    async (frame: QueuedFrame) => {
+      const token = localStorage.getItem("token");
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+      if (token) {
+        headers.Authorization = `Bearer ${token}`;
+      }
+
+      const maxAttempts = Math.max(1, options.maxRetryAttempts ?? 3);
+      let delayMs = 400;
+      let lastError: unknown = null;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const startTime = Date.now();
+          const bodyObj: Record<string, unknown> = {
+            image: frame.image,
+            sessionId: frame.sessionId,
+            objectsOnly: !frame.useServerFallback,
+          };
+          if (frame.calibration) {
+            bodyObj.calibration = frame.calibration;
+          }
+
+          const response = await fetch(
+            `${apiBase}/proctoring/${frame.examRouteId}/frame`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify(bodyObj),
+            },
+          );
+
+          if (response.ok) {
+            const data = await response.json();
+            return { ok: true as const, data, rttMs: Date.now() - startTime };
+          }
+
+          const retriable =
+            response.status >= 500 ||
+            response.status === 429 ||
+            response.status === 408;
+          if (!retriable) {
+            return {
+              ok: false as const,
+              dropFrame: true,
+              status: response.status,
+              error: new Error(`HTTP ${response.status}`),
+            };
+          }
+
+          lastError = new Error(`HTTP ${response.status}`);
+        } catch (error) {
+          lastError = error;
+        }
+
+        if (attempt < maxAttempts) {
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          delayMs = Math.min(delayMs * 2, 4000);
+        }
+      }
+
+      return {
+        ok: false as const,
+        dropFrame: false,
+        status: null,
+        error: lastError,
+      };
+    },
+    [apiBase, options.maxRetryAttempts],
+  );
+
+  const flushQueuedFrames = useCallback(async () => {
+    if (requestInFlight.current || !proctoringActive.current) return;
+    if (frameQueueRef.current.length === 0) return;
+
+    requestInFlight.current = true;
+    const maxFramesPerFlush = 3;
+
+    try {
+      let processed = 0;
+      while (
+        proctoringActive.current &&
+        frameQueueRef.current.length > 0 &&
+        processed < maxFramesPerFlush
+      ) {
+        const frame = frameQueueRef.current[0];
+        const result = await sendQueuedFrame(frame);
+
+        if (!result.ok) {
+          if (result.dropFrame) {
+            frameQueueRef.current.shift();
+          }
+          consecutiveErrors.current++;
+          if (consecutiveErrors.current >= 3) {
+            setAiServiceAvailable(false);
+          }
+          if (result.error) {
+            console.error("[Proctoring] Frame send failed:", result.error);
+          }
+          break;
+        }
+
+        frameQueueRef.current.shift();
+        lastRttMs.current = result.rttMs;
+        consecutiveErrors.current = 0;
+        setAiServiceAvailable((prev) => (prev ? prev : true));
+
+        if (frame.calibration && !calibrationSent.current) {
+          calibrationSent.current = true;
+          for (const queued of frameQueueRef.current) {
+            queued.calibration = null;
+          }
+        }
+
+        handleServerFrame(result.data, frame);
+        processed++;
+      }
+    } finally {
+      requestInFlight.current = false;
+    }
+  }, [handleServerFrame, sendQueuedFrame]);
+
+  // Send frames to server through a local queue to survive temporary outages.
   const detectObjects = useCallback(async () => {
     if (
       !videoRef.current ||
@@ -125,179 +369,47 @@ export const useProctoring = (
       return;
     }
 
-    // Drop frame if previous request still in flight (prevents queue buildup)
-    if (requestInFlight.current) return;
+    const video = videoRef.current;
+    const canvas = frameCanvasRef.current;
+    const captureWidth = options.captureWidth ?? 640;
+    const captureHeight = options.captureHeight ?? 480;
+    canvas.width = captureWidth;
+    canvas.height = captureHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-    const now = Date.now();
-    // If browser model failed, ask server to do full analysis
-    const useServerFallback = faceState.modelFailed;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageQuality = options.imageQuality ?? 0.85;
+    const imageData = canvas.toDataURL("image/jpeg", imageQuality);
 
-    try {
-      const video = videoRef.current;
-      const canvas = frameCanvasRef.current;
-      const captureWidth = options.captureWidth ?? 640;
-      const captureHeight = options.captureHeight ?? 480;
-      canvas.width = captureWidth;
-      canvas.height = captureHeight;
-      const ctx = canvas.getContext("2d");
+    const queuedFrame: QueuedFrame = {
+      image: imageData,
+      capturedAt: Date.now(),
+      useServerFallback: serverFallbackActive,
+      examRouteId: options.examId || "live",
+      sessionId: options.sessionId || null,
+      calibration:
+        !calibrationSent.current && calibrationData.current
+          ? calibrationData.current
+          : null,
+    };
 
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageQuality = options.imageQuality ?? 0.85;
-        const imageData = canvas.toDataURL("image/jpeg", imageQuality);
-
-        const examRouteId = options.examId || "live";
-        const token = localStorage.getItem("token");
-        const headers: Record<string, string> = {
-          "Content-Type": "application/json",
-        };
-        if (token) {
-          headers["Authorization"] = `Bearer ${token}`;
-        }
-
-        requestInFlight.current = true;
-        const startTime = Date.now();
-
-        // Include calibration baselines with the first frame so the server
-        // session starts pre-calibrated for this student's gaze/head position.
-        const bodyObj: Record<string, unknown> = {
-          image: imageData,
-          sessionId: options.sessionId || null,
-          objectsOnly: !useServerFallback,
-        };
-        if (!calibrationSent.current && calibrationData.current) {
-          bodyObj.calibration = calibrationData.current;
-          calibrationSent.current = true;
-        }
-
-        const response = await fetch(
-          `${apiBase}/proctoring/${examRouteId}/frame`,
-          {
-            method: "POST",
-            headers,
-            body: JSON.stringify(bodyObj),
-          },
-        );
-
-        lastRttMs.current = Date.now() - startTime;
-
-        if (response.ok) {
-          consecutiveErrors.current = 0;
-          if (!aiServiceAvailable) setAiServiceAvailable(true);
-
-          const data = await response.json();
-
-          // Update prohibited objects from server
-          const objects = Array.isArray(data.objects) ? data.objects : [];
-          setProhibitedObjects(objects);
-
-          // When in server fallback mode, capture face/gaze/score from server
-          if (
-            useServerFallback &&
-            typeof data.face_count === "number" &&
-            data.face_count >= 0
-          ) {
-            setServerFaceState({
-              faceCount: data.face_count,
-              gazeDirection:
-                typeof data.gaze_direction === "string"
-                  ? data.gaze_direction
-                  : "LOOKING CENTER",
-              headDirection:
-                typeof data.head_direction === "string"
-                  ? data.head_direction
-                  : "HEAD STRAIGHT",
-              suspicionScore:
-                typeof data.suspicion_score === "number"
-                  ? data.suspicion_score
-                  : 0,
-              riskLevel:
-                typeof data.risk_level === "string" ? data.risk_level : "LOW",
-            });
-          }
-
-          // Render debug image if returned
-          if (data.processed_image) {
-            const img = new Image();
-            img.onload = () => {
-              const debugCtx = debugCanvasRef.current.getContext("2d");
-              if (debugCtx) {
-                debugCanvasRef.current.width = img.width;
-                debugCanvasRef.current.height = img.height;
-                debugCtx.drawImage(img, 0, 0);
-                setDebugCanvas(debugCanvasRef.current);
-              }
-            };
-            img.src = data.processed_image;
-          }
-
-          // ── Confidence-aware violation handling ──
-          const violationType =
-            typeof data.violation_type === "string" ? data.violation_type : "";
-          const shouldLog = Boolean(
-            data.should_log_violation || data.should_notify_violation,
-          );
-          const highConfObjects: string[] = Array.isArray(
-            data.high_confidence_objects,
-          )
-            ? data.high_confidence_objects
-            : [];
-          const confirmedObjects: string[] = Array.isArray(
-            data.confirmed_objects,
-          )
-            ? data.confirmed_objects
-            : [];
-
-          if (violationType && shouldLog && onViolation) {
-            const cooldownMs = options.violationCooldownMs ?? 8000;
-            const lastAt = lastViolationByType.current[violationType] || 0;
-            if (now - lastAt >= cooldownMs) {
-              // For PROHIBITED_OBJECT: only fire if high-confidence OR streak-confirmed
-              const isConfident =
-                violationType !== "PROHIBITED_OBJECT" ||
-                highConfObjects.length > 0 ||
-                confirmedObjects.length > 0;
-
-              if (isConfident) {
-                lastViolationByType.current[violationType] = now;
-                onViolation({
-                  type: violationType,
-                  evidence:
-                    data.processed_image || `AI Detected: ${violationType}`,
-                  timestamp: now,
-                  description: data?.violation_details?.description,
-                  detectedObjects: objects,
-                  backendLogged: Boolean(data.backend_violation_logged),
-                  violationCount: data.backend_violation_count,
-                  shouldAutoSubmit: Boolean(data.backend_should_auto_submit),
-                });
-              }
-            }
-          }
-        } else {
-          // Non-OK response (4xx/5xx)
-          consecutiveErrors.current++;
-          if (consecutiveErrors.current >= 3) setAiServiceAvailable(false);
-        }
-      }
-    } catch (error) {
-      consecutiveErrors.current++;
-      if (consecutiveErrors.current >= 3) setAiServiceAvailable(false);
-      console.error("[Proctoring] Object detection error:", error);
-    } finally {
-      requestInFlight.current = false;
+    const maxQueuedFrames = Math.max(1, options.maxQueuedFrames ?? 10);
+    while (frameQueueRef.current.length >= maxQueuedFrames) {
+      frameQueueRef.current.shift();
     }
+    frameQueueRef.current.push(queuedFrame);
+
+    await flushQueuedFrames();
   }, [
-    aiServiceAvailable,
-    apiBase,
-    faceState.modelFailed,
-    onViolation,
-    options.examId,
+    flushQueuedFrames,
     options.captureHeight,
     options.captureWidth,
+    options.examId,
     options.imageQuality,
+    options.maxQueuedFrames,
     options.sessionId,
-    options.violationCooldownMs,
+    serverFallbackActive,
     videoRef,
   ]);
 
@@ -325,9 +437,9 @@ export const useProctoring = (
 
   // ── Fire violation events for browser-detected issues ──
   // Only fire violations for SUSTAINED behavior (not quick glances).
-  // SKIP when browser model failed — server handles all violations in that case.
+  // SKIP when server fallback is active — server handles all violations in that case.
   useEffect(() => {
-    if (!onViolation || faceState.modelFailed) return;
+    if (!onViolation || serverFallbackActive) return;
 
     const now = Date.now();
     const cooldownMs = options.violationCooldownMs ?? 8000;
@@ -383,7 +495,7 @@ export const useProctoring = (
       }
     }
   }, [
-    faceState.modelFailed,
+    serverFallbackActive,
     faceState.faceCount,
     faceState.suspicionScore,
     faceState.abnormalDurationMs,
@@ -393,8 +505,8 @@ export const useProctoring = (
   ]);
 
   // ── Combine browser face state with server object detection ──
-  // When browser model failed, use server-side face/gaze/score data instead.
-  const useFallback = faceState.modelFailed && serverFaceState !== null;
+  // When server fallback is active, use server-side face/gaze/score data instead.
+  const useFallback = serverFallbackActive && serverFaceState !== null;
 
   const mapServerDirection = (
     dir: string,
@@ -408,7 +520,7 @@ export const useProctoring = (
   };
 
   const state: ProctoringState = {
-    isModelLoading: faceState.isLoading,
+    isModelLoading: faceState.isLoading && !browserModelTimedOut,
     browserModelFailed: faceState.modelFailed,
     aiServiceAvailable,
     facesDetected: useFallback

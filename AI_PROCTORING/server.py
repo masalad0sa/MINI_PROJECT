@@ -27,14 +27,18 @@ from modules.logger import ExamLogger
 
 app = FastAPI()
 
-# Only accept requests from the Node backend (localhost:5000) and the
-# frontend dev server. In production, further restrict to actual domain.
-_ALLOWED_ORIGINS = [
+# Only accept requests from the Node backend by default.
+# Override with AI_ALLOWED_ORIGINS="https://api.example.com,https://..."
+# when deploying behind non-localhost hosts.
+_DEFAULT_ALLOWED_ORIGINS = [
     "http://localhost:5000",
     "http://127.0.0.1:5000",
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
 ]
+_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("AI_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+] or _DEFAULT_ALLOWED_ORIGINS
 
 app.add_middleware(
     CORSMiddleware,
