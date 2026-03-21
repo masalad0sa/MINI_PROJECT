@@ -40,7 +40,7 @@ while True:
 
     frame = cv2.flip(frame, 1)
     h, w, _ = frame.shape
-
+    score = 0
     # ---------- FPS ----------
     curr_time = time.time()
     fps = int(1 / (curr_time - prev_time)) if prev_time != 0 else 0
@@ -72,10 +72,15 @@ while True:
             # ---------- DAY 3 LOGIC ----------
             gaze = gaze_tracker.get_gaze_direction(landmarks, w, h)
             head, angle = head_pose.estimate(landmarks)
-            score = behavior_analyzer.analyze(gaze, head)
-            score = behavior_analyzer.analyze(gaze, head)
-            risk_level, risk_color = get_risk_level(score, multi_face_detected)
-
+            risk_level = behavior_analyzer.analyze(
+                  angle, face_count,phone_detected
+            )
+            if risk_level == "HIGH":
+                risk_color = (0, 0, 255)      # Red
+            elif risk_level == "MEDIUM":
+                risk_color = (0, 255, 255)    # Yellow
+            else:
+                risk_color = (0, 255, 0)      # Green
 # ---------- EVIDENCE CAPTURE ----------
         if risk_level == "HIGH" and not evidence_captured:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -100,6 +105,11 @@ while True:
             if phone_detected:
                 score += 10
                 risk_level = "HIGH"
+            
+            if gaze in ["LEFT", "RIGHT"]:
+                score += 5
+            if abs(angle) > 15:
+                score += 5
 
             exam_logger.log(gaze, head, angle, face_count, score, risk_level,phone_detected)
 
