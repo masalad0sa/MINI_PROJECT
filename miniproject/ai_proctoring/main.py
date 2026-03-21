@@ -31,6 +31,7 @@ behavior_analyzer = BehaviorAnalyzer()
 exam_logger = ExamLogger()
 
 prev_time = 0
+score = 0.0
 
 # ---------- MAIN LOOP ----------
 while True:
@@ -40,7 +41,6 @@ while True:
 
     frame = cv2.flip(frame, 1)
     h, w, _ = frame.shape
-    score = 0
     # ---------- FPS ----------
     curr_time = time.time()
     fps = int(1 / (curr_time - prev_time)) if prev_time != 0 else 0
@@ -101,17 +101,17 @@ while True:
 
 
             if multi_face_detected:
-                 score += 5   # small but strong signal
+                 score += 1   # accumulating per frame
             if phone_detected:
-                score += 10
+                score += 2
                 risk_level = "HIGH"
             
             if gaze in ["LEFT", "RIGHT"]:
-                score += 5
+                score += 0.5
             if abs(angle) > 15:
-                score += 5
+                score += 0.5
 
-            exam_logger.log(gaze, head, angle, face_count, score, risk_level,phone_detected)
+            exam_logger.log(gaze, head, angle, face_count, int(score), risk_level,phone_detected)
 
 
             # ---------- DISPLAY ----------
@@ -121,7 +121,7 @@ while True:
             cv2.putText(frame, f"Head: {head}", (20, 70),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-            cv2.putText(frame, f"Suspicion Score: {score}", (20, 100),
+            cv2.putText(frame, f"Suspicion Score: {int(score)}", (20, 100),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             cv2.putText(frame, f"Angle: {int(angle)}", (20, 130),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
