@@ -1,5 +1,4 @@
 import { useRef, useState, useEffect, useCallback } from "react";
-import { useFaceLandmarks } from "./useFaceLandmarks";
 
 interface ProctoringState {
   isModelLoading: boolean;
@@ -68,14 +67,18 @@ export const useProctoring = (
     ((import.meta as any).env.VITE_API_BASE as string) ||
     "http://localhost:5000/api";
 
-  // ── Browser-side face/gaze/head tracking (30 FPS, no server) ──
-  const [browserCalibration, setBrowserCalibration] = useState<Record<
-    string,
-    number
-  > | null>(options.calibration ?? null);
-  const faceState = useFaceLandmarks(videoRef, {
-    calibration: browserCalibration,
-  });
+  // CV analysis is handled by the Proctoring service (Python) only.
+  const faceState = {
+    isLoading: false,
+    modelFailed: false,
+    faceCount: 0,
+    gazeDirection: "CENTER" as const,
+    headPose: "CENTER" as const,
+    suspicionScore: 0,
+    riskLevel: "LOW" as const,
+    suspicionReasons: [] as string[],
+    abnormalDurationMs: 0,
+  };
 
   // ── Server-side object detection state ──
   const [prohibitedObjects, setProhibitedObjects] = useState<string[]>([]);
@@ -115,7 +118,6 @@ export const useProctoring = (
   useEffect(() => {
     if (options.calibration) {
       calibrationData.current = options.calibration;
-      setBrowserCalibration(options.calibration);
       return;
     }
 
@@ -125,7 +127,6 @@ export const useProctoring = (
         if (stored) {
           const parsed = JSON.parse(stored) as Record<string, number>;
           calibrationData.current = parsed;
-          setBrowserCalibration(parsed);
           return;
         }
       } catch {
@@ -134,7 +135,6 @@ export const useProctoring = (
     }
 
     calibrationData.current = null;
-    setBrowserCalibration(null);
   }, [options.calibration, options.examId]);
 
   /** Compute next interval: faster when server is fast, slower when slow / erroring. */
@@ -147,14 +147,8 @@ export const useProctoring = (
     return base;
   }, [options.objectDetectionIntervalMs]);
 
-  const envPreferServerGaze =
-    String(
-      (import.meta as any).env.VITE_USE_SERVER_GAZE || "true",
-    ).toLowerCase() === "true";
-  const preferServerGaze = options.preferServerGaze ?? envPreferServerGaze;
-
-  // Server analysis is active by default (preferServerGaze=true) or on browser model failure.
-  const serverAnalysisActive = preferServerGaze || faceState.modelFailed;
+  // Always use server-side analysis for face/gaze/head CV signals.
+  const serverAnalysisActive = true;
 
   // Frame transport: queue + retry + fallback mode handling.
   const handleServerFrame = useCallback(
@@ -453,81 +447,9 @@ export const useProctoring = (
     };
   }, [detectObjects, getAdaptiveIntervalMs]);
 
-  // ── Fire violation events for browser-detected issues ──
-  // Only fire violations for SUSTAINED behavior (not quick glances).
-  // SKIP when full server analysis is active — server handles violations then.
-  useEffect(() => {
-    const enableBrowserViolations = options.enableBrowserViolations ?? false;
-    if (!enableBrowserViolations || !onViolation || serverAnalysisActive)
-      return;
-
-    const now = Date.now();
-    const cooldownMs = options.violationCooldownMs ?? 8000;
-    const minDurationMs = 3000; // Must look away for 3s+ before violation
-    const reasons = faceState.suspicionReasons || [];
-    const reasonStr = reasons.length > 0 ? ` (${reasons.join(", ")})` : "";
-
-    // No face violation — needs to be sustained (3s+ without face)
-    if (
-      faceState.faceCount === 0 &&
-      faceState.abnormalDurationMs >= minDurationMs
-    ) {
-      const lastAt = lastViolationByType.current["NO_FACE"] || 0;
-      if (now - lastAt >= cooldownMs) {
-        lastViolationByType.current["NO_FACE"] = now;
-        onViolation({
-          type: "NO_FACE",
-          evidence: "No face detected by browser AI",
-          timestamp: now,
-          description: `No face visible for ${(faceState.abnormalDurationMs / 1000).toFixed(1)}s`,
-        });
-      }
-    }
-
-    // Multiple faces violation — triggers faster (no grace needed)
-    if (faceState.faceCount > 1 && faceState.abnormalDurationMs >= 1500) {
-      const lastAt = lastViolationByType.current["MULTIPLE_FACES"] || 0;
-      if (now - lastAt >= cooldownMs) {
-        lastViolationByType.current["MULTIPLE_FACES"] = now;
-        onViolation({
-          type: "MULTIPLE_FACES",
-          evidence: "Multiple faces detected by browser AI",
-          timestamp: now,
-          description: `${faceState.faceCount} faces detected in camera`,
-        });
-      }
-    }
-
-    // High suspicion violation — only when sustained AND score is high
-    if (
-      faceState.suspicionScore >= 70 &&
-      faceState.abnormalDurationMs >= minDurationMs
-    ) {
-      const lastAt = lastViolationByType.current["HIGH_SUSPICION"] || 0;
-      if (now - lastAt >= cooldownMs) {
-        lastViolationByType.current["HIGH_SUSPICION"] = now;
-        onViolation({
-          type: "HIGH_SUSPICION",
-          evidence: `Suspicion score: ${faceState.suspicionScore}`,
-          timestamp: now,
-          description: `Sustained suspicious behavior for ${(faceState.abnormalDurationMs / 1000).toFixed(1)}s${reasonStr}`,
-        });
-      }
-    }
-  }, [
-    serverAnalysisActive,
-    faceState.faceCount,
-    faceState.suspicionScore,
-    faceState.abnormalDurationMs,
-    faceState.suspicionReasons,
-    onViolation,
-    options.enableBrowserViolations,
-    options.violationCooldownMs,
-  ]);
-
   // ── Combine browser face state with server object detection ──
   // When server analysis is active, use server-side face/gaze/score data.
-  const useServerState = serverAnalysisActive && serverFaceState !== null;
+  const useServerState = serverFaceState !== null;
 
   const mapServerDirection = (
     dir: string,
@@ -541,8 +463,8 @@ export const useProctoring = (
   };
 
   const state: ProctoringState = {
-    isModelLoading: faceState.isLoading,
-    browserModelFailed: faceState.modelFailed,
+    isModelLoading: false,
+    browserModelFailed: false,
     aiServiceAvailable,
     facesDetected: useServerState
       ? serverFaceState.faceCount

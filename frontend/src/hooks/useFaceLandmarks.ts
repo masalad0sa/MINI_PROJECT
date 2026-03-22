@@ -72,9 +72,16 @@ interface GazeRuntimeState {
   smoothedVRatio: number | null;
   baselineHRatio: number | null;
   baselineVRatio: number | null;
-  smoothedPitch: number | null;
-  baselinePitch: number | null;
   lastDirection: GazeDir;
+}
+
+interface HeadRuntimeState {
+  smoothedYaw: number | null;
+  smoothedPitch: number | null;
+  smoothedRoll: number | null;
+  yawBias: number;
+  pitchBias: number;
+  lastDirection: HeadDir;
 }
 
 function clamp01(value: number): number {
@@ -97,23 +104,29 @@ function applyCalibrationToGazeRuntime(
     typeof calibration?.gaze_v_baseline === "number"
       ? clamp01(calibration.gaze_v_baseline)
       : null;
-  const calibratedPitch =
-    typeof calibration?.head_pitch_baseline === "number"
-      ? clamp(calibration.head_pitch_baseline, -0.2, 0.5)
-      : null;
-
   runtime.baselineHRatio = calibratedH;
   runtime.baselineVRatio = calibratedV;
   runtime.smoothedHRatio = runtime.baselineHRatio;
   runtime.smoothedVRatio = runtime.baselineVRatio;
-  runtime.baselinePitch = calibratedPitch;
-  runtime.smoothedPitch = runtime.baselinePitch;
   runtime.lastDirection = "CENTER";
+}
+
+function applyCalibrationToHeadRuntime(
+  runtime: HeadRuntimeState,
+  calibration?: BrowserCalibration | null,
+) {
+  const calibratedPitch =
+    typeof calibration?.head_pitch_baseline === "number"
+      ? clamp(calibration.head_pitch_baseline, -0.2, 0.5)
+      : 0;
+  runtime.pitchBias = calibratedPitch;
+  runtime.smoothedPitch = calibratedPitch;
 }
 
 function computeGaze(
   landmarks: { x: number; y: number; z: number }[],
   runtime: GazeRuntimeState,
+  headPitch?: number,
 ): GazeDir {
   // Ensure iris landmarks exist (indices 468-477 require refineLandmarks)
   if (landmarks.length < 478) return runtime.lastDirection;
@@ -154,16 +167,11 @@ function computeGaze(
     );
     const rawV = clamp01((leftV + rightV) / 2);
     const smoothAlpha = 0.4;
-    const pitchSmoothAlpha = 0.35;
+    const verticalGain = 1.4;
 
-    const noseTip = landmarks[1];
-    const forehead = landmarks[10];
-    const chin = landmarks[152];
-    const leftEye = landmarks[33];
-    const rightEye = landmarks[263];
-    const eyeLineY = (leftEye.y + rightEye.y) / 2;
-    const faceHeight = Math.max(1e-6, chin.y - forehead.y);
-    const rawPitch = (noseTip.y - eyeLineY) / faceHeight;
+    const leftEyeHeight = Math.abs(landmarks[145].y - landmarks[159].y);
+    const rightEyeHeight = Math.abs(landmarks[374].y - landmarks[386].y);
+    const validVertical = leftEyeHeight >= 0.006 && rightEyeHeight >= 0.006;
 
     if (runtime.smoothedHRatio === null) {
       runtime.smoothedHRatio = rawH;
@@ -181,57 +189,37 @@ function computeGaze(
         0.97 * runtime.baselineHRatio + 0.03 * runtime.smoothedHRatio;
     }
 
-    if (runtime.smoothedVRatio === null) {
+    if (validVertical) {
+      if (runtime.smoothedVRatio === null) {
+        runtime.smoothedVRatio = rawV;
+      } else {
+        runtime.smoothedVRatio =
+          (1 - smoothAlpha) * runtime.smoothedVRatio + smoothAlpha * rawV;
+      }
+    } else if (runtime.smoothedVRatio === null) {
       runtime.smoothedVRatio = rawV;
-    } else {
-      runtime.smoothedVRatio =
-        (1 - smoothAlpha) * runtime.smoothedVRatio + smoothAlpha * rawV;
     }
-
-    if (runtime.smoothedPitch === null) {
-      runtime.smoothedPitch = rawPitch;
-    } else {
-      runtime.smoothedPitch =
-        (1 - pitchSmoothAlpha) * runtime.smoothedPitch +
-        pitchSmoothAlpha * rawPitch;
-    }
-
-    if (runtime.baselinePitch === null) {
-      runtime.baselinePitch = runtime.smoothedPitch;
-    }
-
-    const canAdaptBaseline = runtime.lastDirection === "CENTER";
 
     if (runtime.baselineVRatio === null) {
       runtime.baselineVRatio = runtime.smoothedVRatio;
     } else if (
-      canAdaptBaseline &&
       Math.abs(runtime.smoothedVRatio - runtime.baselineVRatio) < 0.08
     ) {
       runtime.baselineVRatio =
         0.97 * runtime.baselineVRatio + 0.03 * runtime.smoothedVRatio;
     }
 
-    if (
-      canAdaptBaseline &&
-      runtime.baselinePitch !== null &&
-      runtime.smoothedPitch !== null &&
-      Math.abs(runtime.smoothedPitch - runtime.baselinePitch) < 0.06
-    ) {
-      runtime.baselinePitch =
-        0.98 * runtime.baselinePitch + 0.02 * runtime.smoothedPitch;
-    }
-
     const normH = clamp01(
       runtime.smoothedHRatio - runtime.baselineHRatio + 0.5,
     );
     const normV = clamp01(
-      runtime.smoothedVRatio - runtime.baselineVRatio + 0.5,
+      (runtime.smoothedVRatio - runtime.baselineVRatio) * verticalGain + 0.5,
     );
-    const pitchDelta =
-      runtime.smoothedPitch !== null && runtime.baselinePitch !== null
-        ? runtime.smoothedPitch - runtime.baselinePitch
-        : 0;
+    let adjustedNormV = normV;
+    if (typeof headPitch === "number") {
+      const pitchSuppression = clamp((Math.abs(headPitch) - 0.06) / 0.18, 0, 1);
+      adjustedNormV = 0.5 + (normV - 0.5) * (1 - pitchSuppression);
+    }
 
     const hEnterLeft = 0.36;
     const hExitLeft = 0.44;
@@ -241,8 +229,6 @@ function computeGaze(
     const vExitUp = 0.47;
     const vEnterDown = 0.6;
     const vExitDown = 0.53;
-    const pitchUpAssist = -0.045;
-    const pitchDownAssist = 0.045;
 
     if (runtime.lastDirection === "LEFT") {
       if (normH > hExitLeft) {
@@ -257,13 +243,13 @@ function computeGaze(
         return "RIGHT";
       }
     } else if (runtime.lastDirection === "UP") {
-      if (normV > vExitUp && pitchDelta > -0.03) {
+      if (adjustedNormV > vExitUp) {
         runtime.lastDirection = "CENTER";
       } else {
         return "UP";
       }
     } else if (runtime.lastDirection === "DOWN") {
-      if (normV < vExitDown && pitchDelta < 0.03) {
+      if (adjustedNormV < vExitDown) {
         runtime.lastDirection = "CENTER";
       } else {
         return "DOWN";
@@ -278,16 +264,14 @@ function computeGaze(
       runtime.lastDirection = "RIGHT";
       return "RIGHT";
     }
-    const upByIrisOnly = normV < vEnterUp;
-    const upWithPitchAssist = normV < 0.45 && pitchDelta < pitchUpAssist;
-    const downByIrisOnly = normV > vEnterDown;
-    const downWithPitchAssist = normV > 0.55 && pitchDelta > pitchDownAssist;
+    const pitchBlockVertical =
+      typeof headPitch === "number" && Math.abs(headPitch) >= 0.18;
 
-    if (upByIrisOnly || upWithPitchAssist) {
+    if (!pitchBlockVertical && adjustedNormV < vEnterUp) {
       runtime.lastDirection = "UP";
       return "UP";
     }
-    if (downByIrisOnly || downWithPitchAssist) {
+    if (!pitchBlockVertical && adjustedNormV > vEnterDown) {
       runtime.lastDirection = "DOWN";
       return "DOWN";
     }
@@ -308,8 +292,12 @@ type HeadDir = FaceTrackingState["headPose"];
 
 function computeHeadPose(
   landmarks: { x: number; y: number; z: number }[],
-): HeadDir {
-  if (landmarks.length < 468) return "CENTER";
+  runtime: HeadRuntimeState,
+): { direction: HeadDir; pitch: number } {
+  if (landmarks.length < 468) {
+    runtime.lastDirection = "CENTER";
+    return { direction: "CENTER", pitch: 0 };
+  }
 
   try {
     const leftEye = landmarks[33];
@@ -321,25 +309,84 @@ function computeHeadPose(
     const dx = rightEye.x - leftEye.x;
     const eyeDist = Math.max(1e-6, Math.abs(dx));
     const eyeCenterX = (leftEye.x + rightEye.x) / 2;
-    const yaw = (noseTip.x - eyeCenterX) / eyeDist;
+    const rawYaw = (noseTip.x - eyeCenterX) / eyeDist;
 
     const eyeLineY = (leftEye.y + rightEye.y) / 2;
     const faceHeight = Math.max(1e-6, chin.y - forehead.y);
-    const pitch = (noseTip.y - eyeLineY) / faceHeight;
+    const rawPitch = (noseTip.y - eyeLineY) / faceHeight;
 
     const dy = rightEye.y - leftEye.y;
-    const roll = Math.atan2(dy, dx) * (180 / Math.PI);
+    const rawRoll = Math.atan2(dy, dx) * (180 / Math.PI);
 
-    // Thresholds matching head_pose.py
-    if (yaw < -0.18) return "LEFT";
-    if (yaw > 0.18) return "RIGHT";
-    if (pitch < 0.03) return "UP";
-    if (pitch > 0.28) return "DOWN";
-    if (Math.abs(roll) > 18) return roll > 0 ? "RIGHT" : "LEFT";
+    const smoothAlpha = 0.35;
+    runtime.smoothedYaw =
+      runtime.smoothedYaw === null
+        ? rawYaw
+        : (1 - smoothAlpha) * runtime.smoothedYaw + smoothAlpha * rawYaw;
+    runtime.smoothedPitch =
+      runtime.smoothedPitch === null
+        ? rawPitch
+        : (1 - smoothAlpha) * runtime.smoothedPitch + smoothAlpha * rawPitch;
+    runtime.smoothedRoll =
+      runtime.smoothedRoll === null
+        ? rawRoll
+        : (1 - smoothAlpha) * runtime.smoothedRoll + smoothAlpha * rawRoll;
 
-    return "CENTER";
+    if (Math.abs(runtime.smoothedYaw - runtime.yawBias) < 0.08) {
+      runtime.yawBias = 0.98 * runtime.yawBias + 0.02 * runtime.smoothedYaw;
+    }
+    if (Math.abs(runtime.smoothedPitch - runtime.pitchBias) < 0.08) {
+      runtime.pitchBias =
+        0.98 * runtime.pitchBias + 0.02 * runtime.smoothedPitch;
+    }
+
+    const yaw = runtime.smoothedYaw - runtime.yawBias;
+    const pitch = runtime.smoothedPitch - runtime.pitchBias;
+    const roll = runtime.smoothedRoll;
+
+    if (runtime.lastDirection === "LEFT" && yaw < -0.12) {
+      return { direction: "LEFT", pitch };
+    }
+    if (runtime.lastDirection === "RIGHT" && yaw > 0.12) {
+      return { direction: "RIGHT", pitch };
+    }
+    if (runtime.lastDirection === "UP" && pitch < 0.06) {
+      return { direction: "UP", pitch };
+    }
+    if (runtime.lastDirection === "DOWN" && pitch > 0.24) {
+      return { direction: "DOWN", pitch };
+    }
+
+    if (yaw < -0.18) {
+      runtime.lastDirection = "LEFT";
+      return { direction: "LEFT", pitch };
+    }
+    if (yaw > 0.18) {
+      runtime.lastDirection = "RIGHT";
+      return { direction: "RIGHT", pitch };
+    }
+    if (pitch < 0.03) {
+      runtime.lastDirection = "UP";
+      return { direction: "UP", pitch };
+    }
+    if (pitch > 0.28) {
+      runtime.lastDirection = "DOWN";
+      return { direction: "DOWN", pitch };
+    }
+    if (roll > 18) {
+      runtime.lastDirection = "RIGHT";
+      return { direction: "RIGHT", pitch };
+    }
+    if (roll < -18) {
+      runtime.lastDirection = "LEFT";
+      return { direction: "LEFT", pitch };
+    }
+
+    runtime.lastDirection = "CENTER";
+    return { direction: "CENTER", pitch };
   } catch {
-    return "CENTER";
+    runtime.lastDirection = "CENTER";
+    return { direction: "CENTER", pitch: 0 };
   }
 }
 
@@ -373,8 +420,7 @@ class SuspicionTracker {
     this.reasons = [];
     if (noFace) this.reasons.push("No face visible in camera");
     if (multiFace) this.reasons.push(`${faceCount} faces detected`);
-    if (gazeAbnormal)
-      this.reasons.push(`Eyes looking ${gaze.replace("LOOKING ", "")}`);
+    if (gazeAbnormal) this.reasons.push(`Eyes looking ${gaze}`);
     if (headAbnormal) this.reasons.push(`Head turned ${head}`);
 
     if (abnormal) {
@@ -470,13 +516,20 @@ export function useFaceLandmarks(
     smoothedVRatio: null,
     baselineHRatio: null,
     baselineVRatio: null,
+    lastDirection: "CENTER",
+  });
+  const headRuntimeRef = useRef<HeadRuntimeState>({
+    smoothedYaw: null,
     smoothedPitch: null,
-    baselinePitch: null,
+    smoothedRoll: null,
+    yawBias: 0,
+    pitchBias: 0,
     lastDirection: "CENTER",
   });
 
   useEffect(() => {
     applyCalibrationToGazeRuntime(gazeRuntimeRef.current, options.calibration);
+    applyCalibrationToHeadRuntime(headRuntimeRef.current, options.calibration);
   }, [
     options.calibration?.gaze_h_baseline,
     options.calibration?.gaze_v_baseline,
@@ -575,8 +628,9 @@ export function useFaceLandmarks(
 
       if (faceCount > 0 && results.faceLandmarks[0]) {
         const lm = results.faceLandmarks[0];
-        gaze = computeGaze(lm, gazeRuntimeRef.current);
-        head = computeHeadPose(lm);
+        const headResult = computeHeadPose(lm, headRuntimeRef.current);
+        head = headResult.direction;
+        gaze = computeGaze(lm, gazeRuntimeRef.current, headResult.pitch);
       }
 
       const score = suspicionRef.current.update(gaze, head, faceCount);

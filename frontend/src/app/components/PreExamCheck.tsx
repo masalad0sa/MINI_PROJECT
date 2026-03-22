@@ -8,13 +8,11 @@ import {
   AlertCircle,
   Loader,
   ShieldCheck,
-  Eye,
 } from "lucide-react";
 import * as Progress from "@radix-ui/react-progress";
 import { useAuth } from "../../lib/AuthContext";
 import { WebcamPreview } from "./WebcamPreview";
 import * as api from "../../lib/api";
-import { useFaceLandmarks } from "../../hooks/useFaceLandmarks";
 
 interface CalibrationBaselines {
   gaze_h_baseline: number;
@@ -42,7 +40,6 @@ export function PreExamCheck() {
   const [calibrationBaselines, setCalibrationBaselines] =
     useState<CalibrationBaselines | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
-  const browserModelState = useFaceLandmarks(webcamVideoRef);
   const handleWebcamReady = useCallback(() => {
     setWebcamReady(true);
   }, []);
@@ -99,13 +96,6 @@ export function PreExamCheck() {
     return () => clearInterval(interval);
   }, []);
 
-  const browserModelStatus: "OK" | "Pending" | "Warning" =
-    !webcamReady || browserModelState.isLoading
-      ? "Pending"
-      : browserModelState.modelFailed
-        ? "Warning"
-        : "OK";
-
   const checklistItems: Array<{
     label: string;
     status: "OK" | "Pending" | "Failed" | "Warning";
@@ -136,12 +126,6 @@ export function PreExamCheck() {
         aiServiceReady === null ? "Pending" : aiServiceReady ? "OK" : "Failed",
       icon: ShieldCheck,
       required: true,
-    },
-    {
-      label: "Browser Face Model",
-      status: browserModelStatus,
-      icon: Eye,
-      required: false,
     },
   ];
 
