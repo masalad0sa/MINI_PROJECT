@@ -650,7 +650,8 @@ export function ActiveExam() {
             Exam Not Found
           </h2>
           <p className="text-slate-600 mb-6">
-            {pageError || "Unable to load exam details. Please check your connection and try again."}
+            {pageError ||
+              "Unable to load exam details. Please check your connection and try again."}
           </p>
           <div className="flex items-center justify-center gap-3">
             <button
@@ -724,9 +725,12 @@ export function ActiveExam() {
                 <ShieldAlert className="w-6 h-6 text-red-600" />
               </div>
               <div>
-                <h3 className="font-bold text-red-800">Auto-Submitted Due to Violations</h3>
+                <h3 className="font-bold text-red-800">
+                  Auto-Submitted Due to Violations
+                </h3>
                 <p className="text-red-600 text-sm">
-                  Your exam was automatically submitted due to exceeding the violation threshold.
+                  Your exam was automatically submitted due to exceeding the
+                  violation threshold.
                 </p>
               </div>
             </div>
@@ -752,7 +756,9 @@ export function ActiveExam() {
               >
                 {results?.passed ? "Exam Passed!" : "Exam Failed"}
               </h1>
-              <p className="text-slate-500">{results?.examTitle || exam.title}</p>
+              <p className="text-slate-500">
+                {results?.examTitle || exam.title}
+              </p>
             </div>
 
             {/* Score Section */}
@@ -760,19 +766,26 @@ export function ActiveExam() {
               <div className="text-center mb-4">
                 <p className="text-slate-600 text-sm mb-1">Your Score</p>
                 <p className="text-5xl font-bold text-slate-800">
-                  {results?.score || 0}<span className="text-2xl text-slate-500">%</span>
+                  {results?.score || 0}
+                  <span className="text-2xl text-slate-500">%</span>
                 </p>
-                <p className="text-sm text-slate-500 mt-1">Passing: {results?.passingScore || 50}%</p>
+                <p className="text-sm text-slate-500 mt-1">
+                  Passing: {results?.passingScore || 50}%
+                </p>
               </div>
 
               <div className="grid grid-cols-3 gap-3 text-center">
                 <div className="bg-white rounded-lg p-3 border border-green-200">
                   <p className="text-xs text-slate-500">Correct</p>
-                  <p className="text-2xl font-bold text-green-600">{results?.correctCount || 0}</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {results?.correctCount || 0}
+                  </p>
                 </div>
                 <div className="bg-white rounded-lg p-3 border border-red-200">
                   <p className="text-xs text-slate-500">Wrong</p>
-                  <p className="text-2xl font-bold text-red-600">{results?.wrongCount || 0}</p>
+                  <p className="text-2xl font-bold text-red-600">
+                    {results?.wrongCount || 0}
+                  </p>
                 </div>
                 <div className="bg-white rounded-lg p-3 border border-blue-200">
                   <p className="text-xs text-slate-500">Duration</p>
@@ -804,10 +817,16 @@ export function ActiveExam() {
                   )}
                 </div>
                 <div>
-                  <h3 className={`font-semibold ${results?.isSuspicious ? "text-red-800" : "text-green-800"}`}>
-                    {results?.isSuspicious ? "Flagged as Suspicious" : "Clean Submission"}
+                  <h3
+                    className={`font-semibold ${results?.isSuspicious ? "text-red-800" : "text-green-800"}`}
+                  >
+                    {results?.isSuspicious
+                      ? "Flagged as Suspicious"
+                      : "Clean Submission"}
                   </h3>
-                  <p className={`text-sm ${results?.isSuspicious ? "text-red-600" : "text-green-600"}`}>
+                  <p
+                    className={`text-sm ${results?.isSuspicious ? "text-red-600" : "text-green-600"}`}
+                  >
                     {results?.violationCount || 0} violation(s) recorded
                   </p>
                 </div>
@@ -840,12 +859,18 @@ export function ActiveExam() {
                         {index + 1}
                       </div>
                       <div>
-                        <p className="font-medium">{getViolationLabel(violation.type)}</p>
-                        <p className="text-xs opacity-75">{violation.description}</p>
+                        <p className="font-medium">
+                          {getViolationLabel(violation.type)}
+                        </p>
+                        <p className="text-xs opacity-75">
+                          {violation.description}
+                        </p>
                       </div>
                     </div>
                     <div className="text-right">
-                      <span className="text-xs font-mono">{formatTimestamp(violation.timestamp)}</span>
+                      <span className="text-xs font-mono">
+                        {formatTimestamp(violation.timestamp)}
+                      </span>
                       <p className="text-xs opacity-75">{violation.severity}</p>
                     </div>
                   </div>
@@ -894,8 +919,12 @@ export function ActiveExam() {
                   : "bg-amber-50 border-amber-200"
               }`}
             >
-              <ShieldAlert className={`w-4 h-4 ${violationCount >= MAX_VIOLATIONS_BEFORE_AUTOSUBMIT - 1 ? "text-red-600" : "text-amber-600"}`} />
-              <span className={`text-sm font-medium ${violationCount >= MAX_VIOLATIONS_BEFORE_AUTOSUBMIT - 1 ? "text-red-700" : "text-amber-700"}`}>
+              <ShieldAlert
+                className={`w-4 h-4 ${violationCount >= MAX_VIOLATIONS_BEFORE_AUTOSUBMIT - 1 ? "text-red-600" : "text-amber-600"}`}
+              />
+              <span
+                className={`text-sm font-medium ${violationCount >= MAX_VIOLATIONS_BEFORE_AUTOSUBMIT - 1 ? "text-red-700" : "text-amber-700"}`}
+              >
                 {violationCount}/{MAX_VIOLATIONS_BEFORE_AUTOSUBMIT}
               </span>
             </div>
@@ -941,12 +970,16 @@ export function ActiveExam() {
         {/* Left Panel - Question Content */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-6">
           {/* Proctoring Alert Banner */}
-          {(proctoringState.prohibitedObjects.length > 0 || proctoringState.facesDetected !== 1) && (
+          {(proctoringState.prohibitedObjects.length > 0 ||
+            proctoringState.facesDetected !== 1) && (
             <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center gap-3 max-w-3xl mx-auto">
               <ShieldAlert className="w-5 h-5 text-red-600 shrink-0" />
               <p className="text-sm text-red-700 font-medium">
                 {proctoringState.prohibitedObjects.length > 0 && (
-                  <span>{proctoringState.prohibitedObjects.join(", ")} detected. </span>
+                  <span>
+                    {proctoringState.prohibitedObjects.join(", ")}{" "}
+                    detected.{" "}
+                  </span>
                 )}
                 {proctoringState.facesDetected !== 1 && (
                   <span>{proctoringState.facesDetected} faces visible.</span>
@@ -961,9 +994,14 @@ export function ActiveExam() {
               <div className="bg-white rounded-xl shadow-lg border border-slate-200 p-6 lg:p-8 mb-6">
                 <div className="flex items-center justify-between mb-6">
                   <div>
-                    <span className="text-xs text-slate-500 uppercase tracking-wider">Question</span>
+                    <span className="text-xs text-slate-500 uppercase tracking-wider">
+                      Question
+                    </span>
                     <h2 className="text-xl font-bold text-slate-800">
-                      {Math.min(currentQuestion + 1, questionCount)} <span className="text-slate-400 font-normal">/ {questionCount}</span>
+                      {Math.min(currentQuestion + 1, questionCount)}{" "}
+                      <span className="text-slate-400 font-normal">
+                        / {questionCount}
+                      </span>
                     </h2>
                   </div>
                   <button
@@ -975,7 +1013,9 @@ export function ActiveExam() {
                         : "bg-slate-100 text-slate-600 border border-slate-200 hover:bg-slate-200"
                     } ${lockedByExaminer ? "opacity-50 cursor-not-allowed" : ""}`}
                   >
-                    <Flag className={`w-4 h-4 ${markedQuestions.has(currentQuestion) ? "fill-amber-500" : ""}`} />
+                    <Flag
+                      className={`w-4 h-4 ${markedQuestions.has(currentQuestion) ? "fill-amber-500" : ""}`}
+                    />
                     {markedQuestions.has(currentQuestion) ? "Marked" : "Mark"}
                   </button>
                 </div>
@@ -996,11 +1036,13 @@ export function ActiveExam() {
                           : "border-slate-200 bg-white hover:bg-blue-50 hover:border-blue-300"
                       }`}
                     >
-                      <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
-                        answers[currentQuestion] === idx
-                          ? "border-blue-500 bg-blue-500"
-                          : "border-slate-300"
-                      }`}>
+                      <div
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-all ${
+                          answers[currentQuestion] === idx
+                            ? "border-blue-500 bg-blue-500"
+                            : "border-slate-300"
+                        }`}
+                      >
                         {answers[currentQuestion] === idx && (
                           <div className="w-2 h-2 bg-white rounded-full"></div>
                         )}
@@ -1030,9 +1072,12 @@ export function ActiveExam() {
                 <div className="w-16 h-16 mx-auto mb-4 bg-slate-100 rounded-full flex items-center justify-center">
                   <AlertTriangle className="w-8 h-8 text-slate-400" />
                 </div>
-                <h3 className="text-lg font-semibold text-slate-800 mb-2">No Questions Available</h3>
+                <h3 className="text-lg font-semibold text-slate-800 mb-2">
+                  No Questions Available
+                </h3>
                 <p className="text-sm text-slate-600">
-                  This exam has no configured questions. Please contact your examiner.
+                  This exam has no configured questions. Please contact your
+                  examiner.
                 </p>
               </div>
             )}
@@ -1040,7 +1085,9 @@ export function ActiveExam() {
             {/* Navigation Buttons */}
             <div className="flex items-center justify-between gap-4">
               <button
-                onClick={() => canGoPrev && setCurrentQuestion(currentQuestion - 1)}
+                onClick={() =>
+                  canGoPrev && setCurrentQuestion(currentQuestion - 1)
+                }
                 disabled={!canGoPrev || lockedByExaminer || questionCount === 0}
                 className="flex items-center gap-2 px-5 py-3 bg-slate-100 hover:bg-slate-200 disabled:opacity-40 disabled:cursor-not-allowed text-slate-700 rounded-lg font-medium transition-colors"
               >
@@ -1051,15 +1098,21 @@ export function ActiveExam() {
               {questionCount > 0 && currentQuestion === questionCount - 1 ? (
                 <button
                   onClick={handleSubmit}
-                  disabled={submitting || lockedByExaminer || questionCount === 0}
+                  disabled={
+                    submitting || lockedByExaminer || questionCount === 0
+                  }
                   className="px-8 py-3 bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-colors"
                 >
                   {submitting ? "Submitting..." : "Submit Exam"}
                 </button>
               ) : (
                 <button
-                  onClick={() => canGoNext && setCurrentQuestion(currentQuestion + 1)}
-                  disabled={!canGoNext || lockedByExaminer || questionCount === 0}
+                  onClick={() =>
+                    canGoNext && setCurrentQuestion(currentQuestion + 1)
+                  }
+                  disabled={
+                    !canGoNext || lockedByExaminer || questionCount === 0
+                  }
                   className="flex items-center gap-2 px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg font-semibold transition-colors"
                 >
                   Next
@@ -1118,13 +1171,21 @@ export function ActiveExam() {
               </div>
               {/* Status Bar */}
               <div className="px-3 py-2 bg-slate-800 flex items-center justify-between text-xs">
-                <span className={`font-semibold ${proctoringState.facesDetected === 1 ? "text-green-400" : "text-red-400"}`}>
-                  {proctoringState.facesDetected} Face{proctoringState.facesDetected !== 1 ? "s" : ""}
+                <span
+                  className={`font-semibold ${proctoringState.facesDetected === 1 ? "text-green-400" : "text-red-400"}`}
+                >
+                  {proctoringState.facesDetected} Face
+                  {proctoringState.facesDetected !== 1 ? "s" : ""}
                 </span>
-                <span className={`font-bold px-2 py-0.5 rounded ${
-                  proctoringState.riskLevel === "HIGH" ? "bg-red-500 text-white" :
-                  proctoringState.riskLevel === "MEDIUM" ? "bg-amber-500 text-white" : "bg-green-500 text-white"
-                }`}>
+                <span
+                  className={`font-bold px-2 py-0.5 rounded ${
+                    proctoringState.riskLevel === "HIGH"
+                      ? "bg-red-500 text-white"
+                      : proctoringState.riskLevel === "MEDIUM"
+                        ? "bg-amber-500 text-white"
+                        : "bg-green-500 text-white"
+                  }`}
+                >
                   {proctoringState.riskLevel}
                 </span>
               </div>
@@ -1133,7 +1194,9 @@ export function ActiveExam() {
 
           {/* Question Navigation */}
           <div className="mb-4">
-            <h3 className="font-semibold text-slate-700 mb-3 text-sm">Questions</h3>
+            <h3 className="font-semibold text-slate-700 mb-3 text-sm">
+              Questions
+            </h3>
             <div className="grid grid-cols-6 gap-1.5">
               {questions.map((_: any, idx: number) => (
                 <button
@@ -1185,67 +1248,100 @@ export function ActiveExam() {
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-slate-600">Gaze Direction</span>
-                  <span className={`font-semibold ${proctoringState.gazeDirection !== "CENTER" ? "text-amber-600" : "text-green-600"}`}>
+                  <span
+                    className={`font-semibold ${proctoringState.gazeDirection !== "CENTER" ? "text-amber-600" : "text-green-600"}`}
+                  >
                     {proctoringState.gazeDirection}
                   </span>
                 </div>
                 <div className="text-xs text-slate-400">
-                  H L enter/exit: {GAZE_HORIZONTAL_THRESHOLDS.leftEnter.toFixed(2)}/{GAZE_HORIZONTAL_THRESHOLDS.leftExit.toFixed(2)} | H R enter/exit: {GAZE_HORIZONTAL_THRESHOLDS.rightEnter.toFixed(2)}/{GAZE_HORIZONTAL_THRESHOLDS.rightExit.toFixed(2)}
+                  H L enter/exit:{" "}
+                  {GAZE_HORIZONTAL_THRESHOLDS.leftEnter.toFixed(2)}/
+                  {GAZE_HORIZONTAL_THRESHOLDS.leftExit.toFixed(2)} | H R
+                  enter/exit: {GAZE_HORIZONTAL_THRESHOLDS.rightEnter.toFixed(2)}
+                  /{GAZE_HORIZONTAL_THRESHOLDS.rightExit.toFixed(2)}
                 </div>
                 <div className="text-xs text-slate-400">
-                  V up enter/exit: {GAZE_VERTICAL_THRESHOLDS.upEnter.toFixed(2)}/{GAZE_VERTICAL_THRESHOLDS.upExit.toFixed(2)} | V down enter/exit: {GAZE_VERTICAL_THRESHOLDS.downEnter.toFixed(2)}/{GAZE_VERTICAL_THRESHOLDS.downExit.toFixed(2)}
+                  V up enter/exit: {GAZE_VERTICAL_THRESHOLDS.upEnter.toFixed(2)}
+                  /{GAZE_VERTICAL_THRESHOLDS.upExit.toFixed(2)} | V down
+                  enter/exit: {GAZE_VERTICAL_THRESHOLDS.downEnter.toFixed(2)}/
+                  {GAZE_VERTICAL_THRESHOLDS.downExit.toFixed(2)}
                 </div>
                 <div className="text-xs text-blue-700 mt-0.5">
-                  Current V ratio: {formatOverlayMetric(proctoringState.gazeVerticalValue)}
+                  Current V ratio:{" "}
+                  {formatOverlayMetric(proctoringState.gazeVerticalValue)}
                 </div>
               </div>
               {/* Head Pose */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-slate-600">Head Position</span>
-                  <span className={`font-semibold ${proctoringState.headPose !== "CENTER" ? "text-amber-600" : "text-green-600"}`}>
+                  <span
+                    className={`font-semibold ${proctoringState.headPose !== "CENTER" ? "text-amber-600" : "text-green-600"}`}
+                  >
                     {proctoringState.headPose}
                   </span>
                 </div>
                 <div className="text-xs text-slate-400">
-                  Yaw left/right entry: {HEAD_POSE_THRESHOLDS.yawLeftEnter.toFixed(2)} / +{HEAD_POSE_THRESHOLDS.yawRightEnter.toFixed(2)}
+                  Yaw left/right entry:{" "}
+                  {HEAD_POSE_THRESHOLDS.yawLeftEnter.toFixed(2)} / +
+                  {HEAD_POSE_THRESHOLDS.yawRightEnter.toFixed(2)}
                 </div>
                 <div className="text-xs text-slate-400">
-                  Pitch up/down entry: {HEAD_POSE_THRESHOLDS.pitchUpEnter.toFixed(2)} / +{HEAD_POSE_THRESHOLDS.pitchDownEnter.toFixed(2)} | Vertical gaze block at |pitch| {"\u003e="} {HEAD_POSE_THRESHOLDS.pitchBlockVerticalGazeAbs.toFixed(2)}
+                  Pitch up/down entry:{" "}
+                  {HEAD_POSE_THRESHOLDS.pitchUpEnter.toFixed(2)} / +
+                  {HEAD_POSE_THRESHOLDS.pitchDownEnter.toFixed(2)} | Vertical
+                  gaze block at |pitch| {"\u003e="}{" "}
+                  {HEAD_POSE_THRESHOLDS.pitchBlockVerticalGazeAbs.toFixed(2)}
                 </div>
                 <div className="text-xs text-blue-700 mt-0.5">
-                  Current pitch/yaw: {formatOverlayMetric(proctoringState.headPitch)} / {formatOverlayMetric(proctoringState.headYaw)}
+                  Current pitch/yaw:{" "}
+                  {formatOverlayMetric(proctoringState.headPitch)} /{" "}
+                  {formatOverlayMetric(proctoringState.headYaw)}
                 </div>
               </div>
               {/* Suspicion Score */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-slate-600">Suspicion Score</span>
-                  <span className={`font-bold ${
-                    proctoringState.suspicionScore >= SUSPICION_HIGH_THRESHOLD ? "text-red-600" :
-                    proctoringState.suspicionScore >= SUSPICION_MEDIUM_THRESHOLD ? "text-amber-600" : "text-green-600"
-                  }`}>
+                  <span
+                    className={`font-bold ${
+                      proctoringState.suspicionScore >= SUSPICION_HIGH_THRESHOLD
+                        ? "text-red-600"
+                        : proctoringState.suspicionScore >=
+                            SUSPICION_MEDIUM_THRESHOLD
+                          ? "text-amber-600"
+                          : "text-green-600"
+                    }`}
+                  >
                     {proctoringState.suspicionScore}/100
                   </span>
                 </div>
                 <div className="w-full bg-slate-200 rounded-full h-2">
                   <div
                     className={`h-2 rounded-full transition-all ${
-                      proctoringState.suspicionScore >= SUSPICION_HIGH_THRESHOLD ? "bg-red-500" :
-                      proctoringState.suspicionScore >= SUSPICION_MEDIUM_THRESHOLD ? "bg-amber-500" : "bg-green-500"
+                      proctoringState.suspicionScore >= SUSPICION_HIGH_THRESHOLD
+                        ? "bg-red-500"
+                        : proctoringState.suspicionScore >=
+                            SUSPICION_MEDIUM_THRESHOLD
+                          ? "bg-amber-500"
+                          : "bg-green-500"
                     }`}
                     style={{ width: `${proctoringState.suspicionScore}%` }}
                   ></div>
                 </div>
                 <div className="text-xs text-slate-400 mt-1">
-                  Medium: {SUSPICION_MEDIUM_THRESHOLD}+ | High: {SUSPICION_HIGH_THRESHOLD}+
+                  Medium: {SUSPICION_MEDIUM_THRESHOLD}+ | High:{" "}
+                  {SUSPICION_HIGH_THRESHOLD}+
                 </div>
               </div>
               {/* Violation Count */}
               <div className="pt-2 border-t border-slate-200">
                 <div className="flex items-center justify-between">
                   <span className="text-slate-600">Violations</span>
-                  <span className={`font-bold ${violationCount >= MAX_VIOLATIONS_BEFORE_AUTOSUBMIT - 1 ? "text-red-600" : "text-slate-700"}`}>
+                  <span
+                    className={`font-bold ${violationCount >= MAX_VIOLATIONS_BEFORE_AUTOSUBMIT - 1 ? "text-red-600" : "text-slate-700"}`}
+                  >
                     {violationCount} / {MAX_VIOLATIONS_BEFORE_AUTOSUBMIT}
                   </span>
                 </div>
@@ -1265,8 +1361,12 @@ export function ActiveExam() {
             }`}
           >
             <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full animate-pulse ${lockedByExaminer ? "bg-red-500" : "bg-green-500"}`}></div>
-              <span className={`font-semibold text-sm ${lockedByExaminer ? "text-red-700" : "text-green-700"}`}>
+              <div
+                className={`w-2 h-2 rounded-full animate-pulse ${lockedByExaminer ? "bg-red-500" : "bg-green-500"}`}
+              ></div>
+              <span
+                className={`font-semibold text-sm ${lockedByExaminer ? "text-red-700" : "text-green-700"}`}
+              >
                 {lockedByExaminer ? "Exam Locked" : "Exam Active"}
               </span>
             </div>
