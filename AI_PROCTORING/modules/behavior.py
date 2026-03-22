@@ -32,7 +32,8 @@ class BehaviorAnalyzer:
             self.tilt_streak = max(0, self.tilt_streak - 1)
 
         # Mild head tilt alone should not immediately raise suspicion.
-        head_abnormal = head_hard_abnormal or (head_tilt and self.tilt_streak >= 5)
+        # Require ~0.5 sec of sustained tilt at 30 FPS (15 frames) before flagging.
+        head_abnormal = head_hard_abnormal or (head_tilt and self.tilt_streak >= 15)
         abnormal = gaze_abnormal or head_abnormal
 
         if abnormal:

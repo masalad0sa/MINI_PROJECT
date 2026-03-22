@@ -88,13 +88,14 @@ class HeadPoseEstimator:
         }
 
         # Hysteresis for stable direction labels.
+        # Fixed: HEAD UP/DOWN thresholds now symmetrical around zero
         if self.last_direction == "HEAD TURN LEFT" and yaw < -0.12:
             return "HEAD TURN LEFT", roll
         if self.last_direction == "HEAD TURN RIGHT" and yaw > 0.12:
             return "HEAD TURN RIGHT", roll
-        if self.last_direction == "HEAD UP" and pitch < 0.06:
+        if self.last_direction == "HEAD UP" and pitch < -0.06:  # exit at -0.06
             return "HEAD UP", roll
-        if self.last_direction == "HEAD DOWN" and pitch > 0.24:
+        if self.last_direction == "HEAD DOWN" and pitch > 0.12:  # exit at 0.12
             return "HEAD DOWN", roll
 
         if yaw < -0.18:
@@ -103,10 +104,10 @@ class HeadPoseEstimator:
         if yaw > 0.18:
             self.last_direction = "HEAD TURN RIGHT"
             return "HEAD TURN RIGHT", roll
-        if pitch < 0.03:
+        if pitch < -0.12:  # Fixed: symmetrical with DOWN
             self.last_direction = "HEAD UP"
             return "HEAD UP", roll
-        if pitch > 0.28:
+        if pitch > 0.18:  # Fixed: symmetrical with UP
             self.last_direction = "HEAD DOWN"
             return "HEAD DOWN", roll
         if roll > 18:

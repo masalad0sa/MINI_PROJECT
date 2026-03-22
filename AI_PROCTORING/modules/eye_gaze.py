@@ -135,16 +135,17 @@ class EyeGazeTracker:
 
         # --- Direction decision with hysteresis ---
         # Horizontal thresholds (widened for better sensitivity)
-        h_enter_left = 0.36
-        h_exit_left = 0.44
-        h_enter_right = 0.64
-        h_exit_right = 0.56
+        h_enter_left = 0.32
+        h_exit_left = 0.40
+        h_enter_right = 0.68
+        h_exit_right = 0.60
 
-        # Vertical thresholds
-        v_enter_up = 0.44
-        v_exit_up = 0.47
-        v_enter_down = 0.56
-        v_exit_down = 0.53
+        # Vertical thresholds - widened to reduce false positives from natural
+        # eye movement during reading and normal activity
+        v_enter_up = 0.30
+        v_exit_up = 0.38
+        v_enter_down = 0.70
+        v_exit_down = 0.62
 
         # Hysteresis: stay in current direction until clearly returning to center
         if self.last_direction == "LOOKING LEFT":

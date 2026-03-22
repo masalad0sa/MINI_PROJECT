@@ -289,9 +289,10 @@ class HolisticDetector:
             return d
         if d == "HEAD TURN RIGHT" and yaw > 0.12:
             return d
-        if d == "HEAD UP" and pitch < 0.06:
+        # Fixed: HEAD UP/DOWN thresholds now symmetrical around zero
+        if d == "HEAD UP" and pitch < -0.06:  # exit at -0.06 (enter at -0.12)
             return d
-        if d == "HEAD DOWN" and pitch > 0.24:
+        if d == "HEAD DOWN" and pitch > 0.12:  # exit at 0.12 (enter at 0.18)
             return d
         if d == "HEAD TILT RIGHT" and roll > 12:
             return d
@@ -304,9 +305,9 @@ class HolisticDetector:
             self.last_head_direction = "HEAD TURN LEFT"
         elif yaw > 0.18:
             self.last_head_direction = "HEAD TURN RIGHT"
-        elif pitch < 0.03:
+        elif pitch < -0.12:  # Fixed: symmetrical with DOWN
             self.last_head_direction = "HEAD UP"
-        elif pitch > 0.28:
+        elif pitch > 0.18:  # Fixed: symmetrical with UP
             self.last_head_direction = "HEAD DOWN"
         elif roll > 18:
             self.last_head_direction = "HEAD TILT RIGHT"
@@ -383,14 +384,17 @@ class HolisticDetector:
     def _gaze_direction_hysteresis(self, norm_h: float, norm_v: float, head_pitch) -> str:
         # Thresholds: enter = further from center, exit = closer to center.
         # Once looking LEFT, stay until norm_h climbs back above h_exit_left.
-        h_enter_left  = 0.36   # must drop below this to enter LOOKING LEFT
-        h_exit_left   = 0.42   # must rise above this to leave LOOKING LEFT
-        h_enter_right = 0.64   # must rise above this to enter LOOKING RIGHT
-        h_exit_right  = 0.58   # must drop below this to leave LOOKING RIGHT
-        v_enter_up    = 0.38   # must drop below this to enter LOOKING UP
-        v_exit_up     = 0.44   # must rise above this to leave LOOKING UP
-        v_enter_down  = 0.62   # must rise above this to enter LOOKING DOWN
-        v_exit_down   = 0.56   # must drop below this to leave LOOKING DOWN
+        # Widened thresholds to reduce false positives from natural eye movement.
+        h_enter_left  = 0.32   # must drop below this to enter LOOKING LEFT
+        h_exit_left   = 0.40   # must rise above this to leave LOOKING LEFT
+        h_enter_right = 0.68   # must rise above this to enter LOOKING RIGHT
+        h_exit_right  = 0.60   # must drop below this to leave LOOKING RIGHT
+        # Vertical thresholds widened significantly - eyes naturally move more
+        # during reading and normal activity than horizontal movement.
+        v_enter_up    = 0.30   # must drop below this to enter LOOKING UP
+        v_exit_up     = 0.38   # must rise above this to leave LOOKING UP
+        v_enter_down  = 0.70   # must rise above this to enter LOOKING DOWN
+        v_exit_down   = 0.62   # must drop below this to leave LOOKING DOWN
 
         d = self.last_gaze_direction
 

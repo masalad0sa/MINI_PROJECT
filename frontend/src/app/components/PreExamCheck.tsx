@@ -8,6 +8,7 @@ import {
   AlertCircle,
   Loader,
   ShieldCheck,
+  Eye,
 } from "lucide-react";
 import * as Progress from "@radix-ui/react-progress";
 import { useAuth } from "../../lib/AuthContext";
@@ -383,7 +384,7 @@ export function PreExamCheck() {
                             ? "text-yellow-600"
                             : item.status === "Warning"
                               ? "text-amber-600"
-                            : "text-red-600"
+                              : "text-red-600"
                       }`}
                     >
                       {item.status}
@@ -508,9 +509,9 @@ export function PreExamCheck() {
                 ? "Start Exam"
                 : aiServiceUnavailable
                   ? "AI service unavailable"
-                : allChecksPassed
-                  ? "Complete calibration to continue"
-                  : "Complete all checks"}
+                  : allChecksPassed
+                    ? "Complete calibration to continue"
+                    : "Complete all checks"}
           </button>
         </div>
       </div>
