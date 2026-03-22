@@ -12,7 +12,7 @@ import numpy as np
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Add current directory to path so imports work
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -22,7 +22,9 @@ from modules.eye_gaze import EyeGazeTracker
 from modules.face_detection import FaceDetector
 from modules.face_mesh import FaceMeshDetector
 from modules.head_pose import HeadPoseEstimator
+from modules.holistic_detector import HolisticDetector
 from modules.object_detector import ObjectDetector
+from modules.pretrained_gaze import GazeFusion, PretrainedGazeEstimator
 from modules.logger import ExamLogger
 
 app = FastAPI()
@@ -61,26 +63,40 @@ os.makedirs(EVIDENCE_DIR, exist_ok=True)
 STATE_TTL_SECONDS = 30 * 60
 # Keep in sync with Node/frontend cooldowns (8000ms).
 VIOLATION_COOLDOWN_SECONDS = 8
-# Lowered from 5 → 3 for web: at ~2 FPS, 3 frames ≈ 1.5s sustained absence.
-NO_FACE_STREAK_FOR_HIGH = 3
-MULTI_FACE_STREAK_FOR_HIGH = 2
+# Require more sustained behavior before flagging to avoid false positives.
+NO_FACE_STREAK_FOR_HIGH = 5      # ~10s at ~2 FPS
+MULTI_FACE_STREAK_FOR_HIGH = 3   # ~6s at ~2 FPS
 OBJECT_STREAK_FOR_HIGH = 2
 OBJECT_IMMEDIATE_CONFIDENCE = 0.6
+HIGH_SUSPICION_SCORE_THRESHOLD = 80  # was 70 — too sensitive
 
 
 class FrameData(BaseModel):
     image: str
-    session_id: Optional[str] = None
-    exam_id: Optional[str] = None
-    objects_only: bool = False
+    session_id: Optional[str] = Field(None, alias="sessionId")
+    exam_id: Optional[str] = Field(None, alias="examId")
+    objects_only: bool = Field(False, alias="objectsOnly")
     calibration: Optional[Dict[str, float]] = None
+
+    class Config:
+        populate_by_name = True  # Allow both camelCase and snake_case
 
 
 class SessionState:
     def __init__(self):
+        # Primary: MediaPipe Holistic (face + pose + hands in one pass)
         # Use static_image_mode=True for web sessions. Frames arrive at ~1-2 FPS,
         # so tracking mode loses context between frames and fails frequently.
-        # Static mode runs full re-detection on every frame, which is more reliable.
+        self.holistic = HolisticDetector(
+            static_image_mode=True,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5,
+            smooth_alpha=0.8,  # High alpha for sparse frames (~2s apart)
+        )
+        self.holistic_available = True
+        self.holistic_failures = 0
+
+        # Fallback: Separate modules (used when holistic fails)
         self.mesh_detector = FaceMeshDetector(
             static_image_mode=True,
             max_num_faces=2,
@@ -90,6 +106,14 @@ class SessionState:
         )
         self.behavior_analyzer = BehaviorAnalyzer()
         self.gaze_tracker = EyeGazeTracker()
+        self.pretrained_gaze = PretrainedGazeEstimator(
+            provider=os.getenv("GAZE_MODEL_PROVIDER", "auto")
+        )
+        self.gaze_fusion = GazeFusion(
+            min_confidence=float(os.getenv("GAZE_MODEL_MIN_CONF", "0.62")),
+            window_size=int(os.getenv("GAZE_MODEL_WINDOW", "5")),
+            stable_count=int(os.getenv("GAZE_MODEL_STABLE_COUNT", "3")),
+        )
         self.head_pose = HeadPoseEstimator()
         self.no_face_streak = 0
         self.detector_only_streak = 0
@@ -103,9 +127,12 @@ class SessionState:
 
     def close(self):
         try:
+            self.holistic.close()
+        except Exception:
+            pass
+        try:
             self.mesh_detector.face_mesh.close()
         except Exception:
-            # Best-effort cleanup.
             pass
 
 
@@ -147,6 +174,14 @@ def _get_session_state(session_key: str, calibration: Optional[Dict[str, float]]
         # Apply calibration baselines to new sessions so trackers start
         # pre-calibrated instead of using the noisy first frame.
         if is_new and calibration:
+            # Apply to holistic detector
+            state.holistic.apply_calibration(
+                gaze_h_baseline=calibration.get("gaze_h_baseline"),
+                gaze_v_baseline=calibration.get("gaze_v_baseline"),
+                head_yaw_baseline=calibration.get("head_yaw_baseline"),
+                head_pitch_baseline=calibration.get("head_pitch_baseline"),
+            )
+            # Apply to fallback modules too
             if "gaze_h_baseline" in calibration:
                 state.gaze_tracker.baseline_h_ratio = calibration["gaze_h_baseline"]
                 state.gaze_tracker.smoothed_h_ratio = calibration["gaze_h_baseline"]
@@ -221,10 +256,23 @@ def _should_log_violation(state: SessionState, violation_type: Optional[str]):
 
 @app.get("/health")
 async def health():
+    with STATE_LOCK:
+        states = list(SESSION_STATES.values())
+
+    any_model_available = any(state.pretrained_gaze.available for state in states)
+    backend_names = sorted(
+        {
+            state.pretrained_gaze.backend_name
+            for state in states
+            if state.pretrained_gaze.backend_name != "none"
+        }
+    )
     return {
         "status": "ok",
         "service": "ai-proctoring",
         "sessions_active": len(SESSION_STATES),
+        "gaze_model_available": bool(any_model_available),
+        "gaze_model_backends": backend_names,
     }
 
 
@@ -311,23 +359,86 @@ async def process_frame(data: FrameData):
                 "objects_only": True,
             }
 
-        # 3. Gaze/head behavior.
+        # 3. Gaze/head behavior — try holistic first, then fallback.
         gaze_dir = "LOOKING CENTER"
+        gaze_source = "none"
+        gaze_confidence = 0.0
         head_dir = "HEAD STRAIGHT"
         head_angle = 0.0
+        body_alerts = []
+        hand_alerts = []
+        analysis_engine = "none"
         score = int(round(state.behavior_analyzer.suspicion_score))
 
-        if mesh_face_count > 0 and mesh_results.multi_face_landmarks:
+        holistic_result = None
+        if state.holistic_available:
+            try:
+                holistic_result = state.holistic.analyze(frame)
+            except Exception as holistic_err:
+                state.holistic_failures += 1
+                if state.holistic_failures >= 5:
+                    state.holistic_available = False
+                    print(f"[Server] Holistic disabled after {state.holistic_failures} failures: {holistic_err}")
+
+        if holistic_result and holistic_result.face_detected:
+            # ── Primary: Holistic engine ──
+            analysis_engine = "holistic"
+            gaze_dir = holistic_result.gaze_direction
+            gaze_source = "holistic"
+            gaze_confidence = 0.75
+            head_dir = holistic_result.head_direction
+            head_angle = holistic_result.head_angle
+            body_alerts = holistic_result.body_alerts
+            hand_alerts = holistic_result.hand_alerts
+
+            # Still try pretrained gaze for higher accuracy if available
+            head_pitch = holistic_result.head_pitch
+            model_gaze_dir, model_gaze_conf, _ = state.pretrained_gaze.predict(
+                frame, head_pitch=head_pitch,
+            )
+            if model_gaze_dir and model_gaze_conf >= 0.62:
+                gaze_dir = model_gaze_dir
+                gaze_source = "holistic+l2cs"
+                gaze_confidence = model_gaze_conf
+
+            score = state.behavior_analyzer.analyze(gaze_dir, head_dir)
+
+            # Body posture penalties
+            if holistic_result.posture_suspicious:
+                posture_penalty = min(15, len(body_alerts) * 5 + len(hand_alerts) * 5)
+                score = min(100, score + posture_penalty)
+
+        elif mesh_face_count > 0 and mesh_results.multi_face_landmarks:
+            # ── Fallback: Separate modules ──
+            analysis_engine = "fallback"
             landmarks = mesh_results.multi_face_landmarks[0].landmark
-            gaze_dir = state.gaze_tracker.get_gaze_direction(landmarks, w, h)
             head_dir, head_angle = state.head_pose.estimate(landmarks)
+            head_pitch = float(state.head_pose.last_metrics.get("pitch", 0.0))
+            legacy_gaze_dir = state.gaze_tracker.get_gaze_direction(
+                landmarks,
+                w,
+                h,
+                head_pitch=head_pitch,
+            )
+            model_gaze_dir, model_gaze_conf, _ = state.pretrained_gaze.predict(
+                frame,
+                head_pitch=head_pitch,
+            )
+            gaze_dir, gaze_source, gaze_confidence = state.gaze_fusion.resolve(
+                legacy_label=legacy_gaze_dir,
+                model_label=model_gaze_dir,
+                model_confidence=model_gaze_conf,
+                head_pitch=head_pitch,
+            )
             score = state.behavior_analyzer.analyze(gaze_dir, head_dir)
         else:
             # Mild decay while no mesh landmarks are available.
             score = state.behavior_analyzer.reduce_penalty(1.0)
             if state.no_face_streak >= 3:
                 state.gaze_tracker.reset()
+                state.gaze_fusion.reset()
                 state.head_pose.reset()
+                state.holistic.reset()
 
         # 4. Risk composition from multiple signals.
         if state.no_face_streak >= 2:
@@ -358,7 +469,7 @@ async def process_frame(data: FrameData):
             violation_type = "MULTIPLE_FACES"
         elif state.no_face_streak >= NO_FACE_STREAK_FOR_HIGH:
             violation_type = "NO_FACE"
-        elif score >= 70:
+        elif score >= HIGH_SUSPICION_SCORE_THRESHOLD:
             violation_type = "HIGH_SUSPICION"
 
         if violation_type:
@@ -439,6 +550,10 @@ async def process_frame(data: FrameData):
             "detector_only_streak": int(state.detector_only_streak),
             "multi_face_streak": int(state.multi_face_streak),
             "gaze_direction": gaze_dir,
+            "gaze_source": gaze_source,
+            "gaze_confidence": float(gaze_confidence),
+            "gaze_model_backend": state.pretrained_gaze.backend_name,
+            "gaze_model_available": bool(state.pretrained_gaze.available),
             "gaze_ratio_raw": float(state.gaze_tracker.last_raw_ratio),
             "gaze_ratio": float(state.gaze_tracker.last_normalized_ratio),
             "head_direction": head_dir,
@@ -446,6 +561,10 @@ async def process_frame(data: FrameData):
             "head_yaw": float(state.head_pose.last_metrics.get("yaw", 0.0)),
             "head_pitch": float(state.head_pose.last_metrics.get("pitch", 0.0)),
             "head_roll": float(state.head_pose.last_metrics.get("roll", 0.0)),
+            "analysis_engine": analysis_engine,
+            "body_alerts": body_alerts,
+            "hand_alerts": hand_alerts,
+            "holistic_available": bool(state.holistic_available),
             "processed_image": f"data:image/jpeg;base64,{processed_image_b64}",
         }
     except HTTPException:

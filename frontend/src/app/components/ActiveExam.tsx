@@ -371,7 +371,7 @@ export function ActiveExam() {
 
   // Browser security hook - ENABLED
   useBrowserSecurity({
-    enabled: securityEnabled && !showResults && !loading && !lockedByExaminer,
+    disabled: securityEnabled && !showResults && !loading && !lockedByExaminer,
     onViolation: handleViolation,
     onFullscreenRequest: () => {
       // Will be called when user exits fullscreen - re-request fullscreen
@@ -946,25 +946,6 @@ export function ActiveExam() {
                   className="w-full h-full object-contain"
                   style={{ transform: "scaleX(-1)" }}
                 />
-                {/* Debug Canvas Overlay */}
-                {proctoringState.debugCanvas && (
-                  <canvas
-                    ref={(el) => {
-                      if (el && proctoringState.debugCanvas) {
-                        el.width = proctoringState.debugCanvas.width;
-                        el.height = proctoringState.debugCanvas.height;
-                        const ctx = el.getContext("2d");
-                        if (ctx) {
-                          // Draw the canvas content normally (don't mirror)
-                          // The bounding boxes are already adjusted in the hook
-                          ctx.clearRect(0, 0, el.width, el.height);
-                          ctx.drawImage(proctoringState.debugCanvas, 0, 0);
-                        }
-                      }
-                    }}
-                    className="absolute inset-0 w-full h-full object-contain pointer-events-none"
-                  />
-                )}
               </>
             )}
             {/* AI Proctoring Overlays */}

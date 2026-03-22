@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import mongoose from "mongoose";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import cookieParser from "cookie-parser";
 import { createServer } from "http";
 import { setupSocket } from "./socket.js";
 import authRoutes from "./routes/auth.js";
@@ -58,6 +59,7 @@ app.use(
 );
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 // Routes
 app.use("/api/auth", authLimiter, authRoutes);

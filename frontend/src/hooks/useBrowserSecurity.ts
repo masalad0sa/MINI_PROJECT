@@ -84,7 +84,8 @@ export function useBrowserSecurity({
     // Tab visibility change detection
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        reportViolation("TAB_SWITCH", "Student switched to another tab or window");
+        console.log("Tab visibility changed, but violation reporting is temporarily disabled.");
+        // reportViolation("TAB_SWITCH", "Student switched to another tab or window");
       }
     };
 

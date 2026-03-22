@@ -4,7 +4,11 @@ import TokenBlacklist from "../models/TokenBlacklist.js";
 
 export const protect = async (req, res, next) => {
   let token;
-  if (
+
+  // Priority: httpOnly cookie > Authorization header
+  if (req.cookies && req.cookies.token) {
+    token = req.cookies.token;
+  } else if (
     req.headers.authorization &&
     req.headers.authorization.startsWith("Bearer")
   ) {
@@ -45,6 +49,8 @@ export const protect = async (req, res, next) => {
     next();
   } catch (error) {
     if (error.name === "TokenExpiredError") {
+      // Clear expired cookie if it was set
+      res.clearCookie("token");
       return res
         .status(401)
         .json({ message: "Token expired. Please login again." });

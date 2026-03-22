@@ -7,6 +7,59 @@ const PYTHON_SERVICE_URL =
 const AI_VIOLATION_COOLDOWN_MS = 8000;
 const aiViolationCooldownCache = new Map();
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const postToPythonWithRetry = async (
+  endpoint,
+  payload,
+  {
+    timeout = 8000,
+    maxAttempts = 3,
+    initialDelayMs = 400,
+  } = {},
+) => {
+  let delayMs = initialDelayMs;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await axios.post(`${PYTHON_SERVICE_URL}${endpoint}`, payload, {
+        timeout,
+      });
+    } catch (error) {
+      lastError = error;
+      const status = error?.response?.status;
+      const retriable =
+        !status || status >= 500 || status === 429 || status === 408;
+      if (!retriable || attempt >= maxAttempts) break;
+      await sleep(delayMs);
+      delayMs = Math.min(delayMs * 2, 2500);
+    }
+  }
+
+  throw lastError;
+};
+
+const buildPythonServiceError = (error, endpointName) => {
+  const status = error?.response?.status;
+  const detail =
+    error?.response?.data || error?.message || "Unknown Python service error";
+
+  if (status === 404) {
+    return {
+      status,
+      detail,
+      message: `AI endpoint ${endpointName} not found on ${PYTHON_SERVICE_URL}. Ensure AI_PROCTORING/server.py is running.`,
+    };
+  }
+
+  return {
+    status: status ?? null,
+    detail,
+    message: `AI service unavailable for ${endpointName}`,
+  };
+};
+
 const AI_SEVERITY_BY_TYPE = {
   PROHIBITED_OBJECT: "CRITICAL",
   MULTIPLE_FACES: "CRITICAL",
@@ -152,8 +205,8 @@ export const processFrame = async (req, res) => {
 
     // Forward to Python Service
     try {
-      const response = await axios.post(
-        `${PYTHON_SERVICE_URL}/process_frame`,
+      const response = await postToPythonWithRetry(
+        "/process_frame",
         {
           image,
           session_id: resolvedSessionId,
@@ -163,6 +216,8 @@ export const processFrame = async (req, res) => {
         },
         {
           timeout: 12000,
+          maxAttempts: 3,
+          initialDelayMs: 500,
         },
       );
 
@@ -227,15 +282,15 @@ export const processFrame = async (req, res) => {
         backend_log_reason: backendLogReason,
       });
     } catch (pythonError) {
-      const pythonDetail =
-        pythonError?.response?.data ||
-        pythonError?.message ||
-        "Unknown Python service error";
-      console.error("Python Service Error:", pythonDetail);
-      // Fallback or Error response
+      const pythonErr = buildPythonServiceError(
+        pythonError,
+        "/process_frame",
+      );
+      console.error("Python Service Error:", pythonErr.detail);
       res.status(503).json({
-        message: "AI Proctoring Service unavailable",
-        error: pythonDetail,
+        message: pythonErr.message,
+        error: pythonErr.detail,
+        pythonStatus: pythonErr.status,
       });
     }
   } catch (error) {
@@ -286,19 +341,24 @@ export const calibrateGaze = async (req, res) => {
         .json({ message: "At least 2 calibration images required" });
     }
 
-    const response = await axios.post(
-      `${PYTHON_SERVICE_URL}/calibrate`,
+    const response = await postToPythonWithRetry(
+      "/calibrate",
       { images },
-      { timeout: 20000 },
+      {
+        timeout: 20000,
+        maxAttempts: 2,
+        initialDelayMs: 600,
+      },
     );
 
     res.json(response.data);
   } catch (error) {
-    const detail = error?.response?.data || error?.message || "Unknown error";
-    console.error("[Calibrate] Python error:", detail);
+    const pythonErr = buildPythonServiceError(error, "/calibrate");
+    console.error("[Calibrate] Python error:", pythonErr.detail);
     res.status(503).json({
-      message: "AI service unavailable for calibration",
-      error: detail,
+      message: pythonErr.message,
+      error: pythonErr.detail,
+      pythonStatus: pythonErr.status,
     });
   }
 };
@@ -314,19 +374,24 @@ export const systemCheckFrame = async (req, res) => {
       return res.status(400).json({ message: "Image data is required" });
     }
 
-    const response = await axios.post(
-      `${PYTHON_SERVICE_URL}/system_check`,
+    const response = await postToPythonWithRetry(
+      "/system_check",
       { image },
-      { timeout: 8000 },
+      {
+        timeout: 12000,
+        maxAttempts: 3,
+        initialDelayMs: 500,
+      },
     );
 
     res.json(response.data);
   } catch (error) {
-    const detail = error?.response?.data || error?.message || "Unknown error";
-    console.error("[SystemCheck] Python error:", detail);
+    const pythonErr = buildPythonServiceError(error, "/system_check");
+    console.error("[SystemCheck] Python error:", pythonErr.detail);
     res.status(503).json({
-      message: "AI service unavailable for system check",
-      error: detail,
+      message: pythonErr.message,
+      error: pythonErr.detail,
+      pythonStatus: pythonErr.status,
     });
   }
 };

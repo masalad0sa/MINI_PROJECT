@@ -34,8 +34,6 @@ interface UseProctoringOptions {
   sessionId?: string;
   /** How often to send frames to server for object detection (ms). Default 2000. */
   objectDetectionIntervalMs?: number;
-  /** If browser model keeps loading beyond this, use server full analysis. */
-  browserModelLoadTimeoutMs?: number;
   /** Maximum locally queued frames when network is unstable. */
   maxQueuedFrames?: number;
   /** Max retry attempts for one frame before deferring to queue flush retry. */
@@ -46,6 +44,10 @@ interface UseProctoringOptions {
   imageQuality?: number;
   /** Pre-computed gaze/head calibration baselines from PreExamCheck. */
   calibration?: Record<string, number> | null;
+  /** Force server-side gaze/head analysis even when browser model is healthy. */
+  preferServerGaze?: boolean;
+  /** Allow browser-side violation emission (disabled by default). */
+  enableBrowserViolations?: boolean;
 }
 
 interface QueuedFrame {
@@ -67,7 +69,13 @@ export const useProctoring = (
     "http://localhost:5000/api";
 
   // ── Browser-side face/gaze/head tracking (30 FPS, no server) ──
-  const faceState = useFaceLandmarks(videoRef);
+  const [browserCalibration, setBrowserCalibration] = useState<Record<
+    string,
+    number
+  > | null>(options.calibration ?? null);
+  const faceState = useFaceLandmarks(videoRef, {
+    calibration: browserCalibration,
+  });
 
   // ── Server-side object detection state ──
   const [prohibitedObjects, setProhibitedObjects] = useState<string[]>([]);
@@ -97,7 +105,6 @@ export const useProctoring = (
   const consecutiveErrors = useRef(0);
   const [aiServiceAvailable, setAiServiceAvailable] = useState(true);
   const adaptiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [browserModelTimedOut, setBrowserModelTimedOut] = useState(false);
 
   // ── Calibration: send with first frame only ──
   const calibrationSent = useRef(false);
@@ -108,16 +115,26 @@ export const useProctoring = (
   useEffect(() => {
     if (options.calibration) {
       calibrationData.current = options.calibration;
+      setBrowserCalibration(options.calibration);
       return;
     }
+
     if (options.examId) {
       try {
         const stored = sessionStorage.getItem(`calibration:${options.examId}`);
-        if (stored) calibrationData.current = JSON.parse(stored);
+        if (stored) {
+          const parsed = JSON.parse(stored) as Record<string, number>;
+          calibrationData.current = parsed;
+          setBrowserCalibration(parsed);
+          return;
+        }
       } catch {
         // ignore parse errors
       }
     }
+
+    calibrationData.current = null;
+    setBrowserCalibration(null);
   }, [options.calibration, options.examId]);
 
   /** Compute next interval: faster when server is fast, slower when slow / erroring. */
@@ -130,27 +147,14 @@ export const useProctoring = (
     return base;
   }, [options.objectDetectionIntervalMs]);
 
-  // If browser model init hangs, fail open into server-side full analysis.
-  useEffect(() => {
-    const timeoutMs = options.browserModelLoadTimeoutMs ?? 12000;
+  const envPreferServerGaze =
+    String(
+      (import.meta as any).env.VITE_USE_SERVER_GAZE || "true",
+    ).toLowerCase() === "true";
+  const preferServerGaze = options.preferServerGaze ?? envPreferServerGaze;
 
-    if (!faceState.isLoading) {
-      setBrowserModelTimedOut(false);
-      return;
-    }
-
-    setBrowserModelTimedOut(false);
-    const timer = setTimeout(() => {
-      setBrowserModelTimedOut(true);
-      console.warn(
-        "[Proctoring] Browser model load timed out; switching to server fallback.",
-      );
-    }, timeoutMs);
-
-    return () => clearTimeout(timer);
-  }, [faceState.isLoading, options.browserModelLoadTimeoutMs]);
-
-  const serverFallbackActive = faceState.modelFailed || browserModelTimedOut;
+  // Server analysis is active by default (preferServerGaze=true) or on browser model failure.
+  const serverAnalysisActive = preferServerGaze || faceState.modelFailed;
 
   // Frame transport: queue + retry + fallback mode handling.
   const handleServerFrame = useCallback(
@@ -199,7 +203,9 @@ export const useProctoring = (
       const shouldLog = Boolean(
         data.should_log_violation || data.should_notify_violation,
       );
-      const highConfObjects: string[] = Array.isArray(data.high_confidence_objects)
+      const highConfObjects: string[] = Array.isArray(
+        data.high_confidence_objects,
+      )
         ? data.high_confidence_objects
         : [];
       const confirmedObjects: string[] = Array.isArray(data.confirmed_objects)
@@ -369,23 +375,32 @@ export const useProctoring = (
       return;
     }
 
+    // Low-latency mode: when a request is in-flight, skip capturing another
+    // frame so we don't build a backlog and show stale analysis results.
+    if (requestInFlight.current) {
+      return;
+    }
+
     const video = videoRef.current;
     const canvas = frameCanvasRef.current;
-    const captureWidth = options.captureWidth ?? 640;
-    const captureHeight = options.captureHeight ?? 480;
+    const captureWidth =
+      options.captureWidth ?? (serverAnalysisActive ? 480 : 640);
+    const captureHeight =
+      options.captureHeight ?? (serverAnalysisActive ? 360 : 480);
     canvas.width = captureWidth;
     canvas.height = captureHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imageQuality = options.imageQuality ?? 0.85;
+    const imageQuality =
+      options.imageQuality ?? (serverAnalysisActive ? 0.7 : 0.85);
     const imageData = canvas.toDataURL("image/jpeg", imageQuality);
 
     const queuedFrame: QueuedFrame = {
       image: imageData,
       capturedAt: Date.now(),
-      useServerFallback: serverFallbackActive,
+      useServerFallback: serverAnalysisActive,
       examRouteId: options.examId || "live",
       sessionId: options.sessionId || null,
       calibration:
@@ -394,7 +409,10 @@ export const useProctoring = (
           : null,
     };
 
-    const maxQueuedFrames = Math.max(1, options.maxQueuedFrames ?? 10);
+    const maxQueuedFrames = Math.max(
+      1,
+      options.maxQueuedFrames ?? (serverAnalysisActive ? 2 : 10),
+    );
     while (frameQueueRef.current.length >= maxQueuedFrames) {
       frameQueueRef.current.shift();
     }
@@ -409,7 +427,7 @@ export const useProctoring = (
     options.imageQuality,
     options.maxQueuedFrames,
     options.sessionId,
-    serverFallbackActive,
+    serverAnalysisActive,
     videoRef,
   ]);
 
@@ -437,9 +455,11 @@ export const useProctoring = (
 
   // ── Fire violation events for browser-detected issues ──
   // Only fire violations for SUSTAINED behavior (not quick glances).
-  // SKIP when server fallback is active — server handles all violations in that case.
+  // SKIP when full server analysis is active — server handles violations then.
   useEffect(() => {
-    if (!onViolation || serverFallbackActive) return;
+    const enableBrowserViolations = options.enableBrowserViolations ?? false;
+    if (!enableBrowserViolations || !onViolation || serverAnalysisActive)
+      return;
 
     const now = Date.now();
     const cooldownMs = options.violationCooldownMs ?? 8000;
@@ -495,18 +515,19 @@ export const useProctoring = (
       }
     }
   }, [
-    serverFallbackActive,
+    serverAnalysisActive,
     faceState.faceCount,
     faceState.suspicionScore,
     faceState.abnormalDurationMs,
     faceState.suspicionReasons,
     onViolation,
+    options.enableBrowserViolations,
     options.violationCooldownMs,
   ]);
 
   // ── Combine browser face state with server object detection ──
-  // When server fallback is active, use server-side face/gaze/score data instead.
-  const useFallback = serverFallbackActive && serverFaceState !== null;
+  // When server analysis is active, use server-side face/gaze/score data.
+  const useServerState = serverAnalysisActive && serverFaceState !== null;
 
   const mapServerDirection = (
     dir: string,
@@ -520,31 +541,31 @@ export const useProctoring = (
   };
 
   const state: ProctoringState = {
-    isModelLoading: faceState.isLoading && !browserModelTimedOut,
+    isModelLoading: faceState.isLoading,
     browserModelFailed: faceState.modelFailed,
     aiServiceAvailable,
-    facesDetected: useFallback
+    facesDetected: useServerState
       ? serverFaceState.faceCount
       : faceState.faceCount,
-    headPose: useFallback
+    headPose: useServerState
       ? mapServerDirection(serverFaceState.headDirection)
       : faceState.headPose,
-    gazeDirection: useFallback
+    gazeDirection: useServerState
       ? mapServerDirection(serverFaceState.gazeDirection)
       : faceState.gazeDirection,
-    suspicionScore: useFallback
+    suspicionScore: useServerState
       ? serverFaceState.suspicionScore
       : faceState.suspicionScore,
     prohibitedObjects,
     riskLevel:
       prohibitedObjects.length > 0
         ? "HIGH"
-        : useFallback
+        : useServerState
           ? (serverFaceState.riskLevel as "LOW" | "MEDIUM" | "HIGH")
           : faceState.riskLevel,
     debugCanvas,
-    suspicionReasons: useFallback ? [] : faceState.suspicionReasons,
-    abnormalDurationMs: useFallback ? 0 : faceState.abnormalDurationMs,
+    suspicionReasons: useServerState ? [] : faceState.suspicionReasons,
+    abnormalDurationMs: useServerState ? 0 : faceState.abnormalDurationMs,
   };
 
   return state;

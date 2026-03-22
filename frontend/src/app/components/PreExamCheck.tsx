@@ -43,6 +43,12 @@ export function PreExamCheck() {
     useState<CalibrationBaselines | null>(null);
   const webcamVideoRef = useRef<HTMLVideoElement | null>(null);
   const browserModelState = useFaceLandmarks(webcamVideoRef);
+  const handleWebcamReady = useCallback(() => {
+    setWebcamReady(true);
+  }, []);
+  const handleFaceDetectionChange = useCallback((detected: boolean) => {
+    setFaceDetected(detected);
+  }, []);
 
   useEffect(() => {
     // Check internet connection
@@ -277,6 +283,32 @@ export function PreExamCheck() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      {calibrating && (
+        <div className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-[1px]">
+          <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-xl border border-slate-200 bg-white/95 px-6 py-4 text-center shadow-xl">
+            <p className="text-sm font-semibold text-slate-800">
+              Calibration in progress
+            </p>
+            <p className="text-xs text-slate-600">
+              Keep your head still and look at the center dot
+            </p>
+            <p className="mt-1 text-2xl font-bold text-indigo-700">
+              {calibrationCountdown}
+            </p>
+          </div>
+
+          <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+            <div className="relative h-24 w-24">
+              <div className="absolute inset-0 rounded-full border-4 border-indigo-200/90" />
+              <div className="absolute inset-0 rounded-full border-4 border-indigo-300/80 animate-pulse" />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="h-4 w-4 rounded-full bg-indigo-500 shadow-[0_0_0_10px_rgba(99,102,241,0.2)]" />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Top Bar */}
       <div className="bg-white border-b border-slate-200 h-[60px] flex items-center justify-between px-8 shadow-sm">
         <div className="flex items-center gap-2">
@@ -333,12 +365,8 @@ export function PreExamCheck() {
           <div className="bg-white rounded-xl shadow-md overflow-hidden border border-slate-200">
             <WebcamPreview
               videoRef={webcamVideoRef}
-              onReady={() => {
-                setWebcamReady(true);
-              }}
-              onFaceDetectionChange={(detected) => {
-                setFaceDetected(detected);
-              }}
+              onReady={handleWebcamReady}
+              onFaceDetectionChange={handleFaceDetectionChange}
             />
           </div>
 
@@ -401,24 +429,16 @@ export function PreExamCheck() {
             </div>
 
             {calibrating ? (
-              <div className="flex flex-col items-center py-8">
-                <div className="relative w-24 h-24 mb-4">
-                  <div className="absolute inset-0 rounded-full border-4 border-indigo-200" />
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="w-4 h-4 bg-indigo-500 rounded-full animate-pulse" />
-                  </div>
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-2xl font-bold text-indigo-700">
-                      {calibrationCountdown}
-                    </span>
-                  </div>
+              <div className="flex items-center gap-3 rounded-lg border border-indigo-200 bg-indigo-50 p-4">
+                <Loader className="h-5 w-5 animate-spin text-indigo-600" />
+                <div>
+                  <p className="text-sm font-medium text-indigo-700">
+                    Hold steady while we calibrate your gaze
+                  </p>
+                  <p className="text-xs text-indigo-600">
+                    Use the centered overlay dot for {calibrationCountdown}s
+                  </p>
                 </div>
-                <p className="text-lg font-medium text-slate-700">
-                  Look at the dot above
-                </p>
-                <p className="text-sm text-slate-500">
-                  Keep your head still and look at the center of your screen
-                </p>
               </div>
             ) : calibrationDone ? (
               <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">

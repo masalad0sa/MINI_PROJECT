@@ -60,6 +60,15 @@ const userSchema = new mongoose.Schema(
       type: Date,
       select: false,
     },
+    // Refresh token fields (hashed, for token rotation)
+    refreshToken: {
+      type: String,
+      select: false,
+    },
+    refreshTokenExpire: {
+      type: Date,
+      select: false,
+    },
   },
   {
     timestamps: true, // Automatically manage createdAt and updatedAt

@@ -14,6 +14,16 @@ export interface FaceTrackingState {
   abnormalDurationMs: number;
 }
 
+interface BrowserCalibration {
+  gaze_h_baseline?: number;
+  gaze_v_baseline?: number;
+  head_pitch_baseline?: number;
+}
+
+interface UseFaceLandmarksOptions {
+  calibration?: BrowserCalibration | null;
+}
+
 // ---------------------------------------------------------------------------
 // Gaze helpers – ported from Python eye_gaze.py
 // ---------------------------------------------------------------------------
@@ -57,12 +67,56 @@ function irisVerticalRatio(
 
 type GazeDir = FaceTrackingState["gazeDirection"];
 
+interface GazeRuntimeState {
+  smoothedHRatio: number | null;
+  smoothedVRatio: number | null;
+  baselineHRatio: number | null;
+  baselineVRatio: number | null;
+  smoothedPitch: number | null;
+  baselinePitch: number | null;
+  lastDirection: GazeDir;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function applyCalibrationToGazeRuntime(
+  runtime: GazeRuntimeState,
+  calibration?: BrowserCalibration | null,
+) {
+  const calibratedH =
+    typeof calibration?.gaze_h_baseline === "number"
+      ? clamp01(calibration.gaze_h_baseline)
+      : null;
+  const calibratedV =
+    typeof calibration?.gaze_v_baseline === "number"
+      ? clamp01(calibration.gaze_v_baseline)
+      : null;
+  const calibratedPitch =
+    typeof calibration?.head_pitch_baseline === "number"
+      ? clamp(calibration.head_pitch_baseline, -0.2, 0.5)
+      : null;
+
+  runtime.baselineHRatio = calibratedH;
+  runtime.baselineVRatio = calibratedV;
+  runtime.smoothedHRatio = runtime.baselineHRatio;
+  runtime.smoothedVRatio = runtime.baselineVRatio;
+  runtime.baselinePitch = calibratedPitch;
+  runtime.smoothedPitch = runtime.baselinePitch;
+  runtime.lastDirection = "CENTER";
+}
+
 function computeGaze(
   landmarks: { x: number; y: number; z: number }[],
-  prev: GazeDir,
+  runtime: GazeRuntimeState,
 ): GazeDir {
   // Ensure iris landmarks exist (indices 468-477 require refineLandmarks)
-  if (landmarks.length < 478) return prev;
+  if (landmarks.length < 478) return runtime.lastDirection;
 
   try {
     const leftH = irisHorizontalRatio(
@@ -79,9 +133,12 @@ function computeGaze(
     );
 
     // Skip if eyes too small (e.g. far from camera)
-    if (leftH.width < 0.01 || rightH.width < 0.01) return prev;
+    if (leftH.width < 0.01 || rightH.width < 0.01) {
+      runtime.lastDirection = "CENTER";
+      return "CENTER";
+    }
 
-    const hRatio = (leftH.ratio + rightH.ratio) / 2;
+    const rawH = clamp01((leftH.ratio + rightH.ratio) / 2);
 
     const leftV = irisVerticalRatio(
       landmarks,
@@ -95,10 +152,10 @@ function computeGaze(
       374,
       [473, 474, 475, 476, 477],
     );
-    const vRatio = (leftV + rightV) / 2;
+    const rawV = clamp01((leftV + rightV) / 2);
+    const smoothAlpha = 0.4;
+    const pitchSmoothAlpha = 0.35;
 
-    // Also use head pitch to supplement vertical gaze detection.
-    // The iris moves very little vertically, but the head tilts noticeably.
     const noseTip = landmarks[1];
     const forehead = landmarks[10];
     const chin = landmarks[152];
@@ -106,26 +163,140 @@ function computeGaze(
     const rightEye = landmarks[263];
     const eyeLineY = (leftEye.y + rightEye.y) / 2;
     const faceHeight = Math.max(1e-6, chin.y - forehead.y);
-    const headPitch = (noseTip.y - eyeLineY) / faceHeight;
+    const rawPitch = (noseTip.y - eyeLineY) / faceHeight;
 
-    // Horizontal: iris ratio thresholds
-    if (hRatio < 0.38) return "LEFT";
-    if (hRatio > 0.62) return "RIGHT";
+    if (runtime.smoothedHRatio === null) {
+      runtime.smoothedHRatio = rawH;
+    } else {
+      runtime.smoothedHRatio =
+        (1 - smoothAlpha) * runtime.smoothedHRatio + smoothAlpha * rawH;
+    }
 
-    // Vertical: combine iris ratio + head pitch for better sensitivity
-    // Iris-only thresholds are tight because eye opening is very small
-    const irisUp = vRatio < 0.43;
-    const irisDown = vRatio > 0.57;
-    // Head pitch: looking up (pitch < 0.05) or down (pitch > 0.25)
-    const headUp = headPitch < 0.05;
-    const headDown = headPitch > 0.25;
+    if (runtime.baselineHRatio === null) {
+      runtime.baselineHRatio = runtime.smoothedHRatio;
+    } else if (
+      Math.abs(runtime.smoothedHRatio - runtime.baselineHRatio) < 0.08
+    ) {
+      runtime.baselineHRatio =
+        0.97 * runtime.baselineHRatio + 0.03 * runtime.smoothedHRatio;
+    }
 
-    if (irisUp || headUp) return "UP";
-    if (irisDown || headDown) return "DOWN";
+    if (runtime.smoothedVRatio === null) {
+      runtime.smoothedVRatio = rawV;
+    } else {
+      runtime.smoothedVRatio =
+        (1 - smoothAlpha) * runtime.smoothedVRatio + smoothAlpha * rawV;
+    }
 
+    if (runtime.smoothedPitch === null) {
+      runtime.smoothedPitch = rawPitch;
+    } else {
+      runtime.smoothedPitch =
+        (1 - pitchSmoothAlpha) * runtime.smoothedPitch +
+        pitchSmoothAlpha * rawPitch;
+    }
+
+    if (runtime.baselinePitch === null) {
+      runtime.baselinePitch = runtime.smoothedPitch;
+    }
+
+    const canAdaptBaseline = runtime.lastDirection === "CENTER";
+
+    if (runtime.baselineVRatio === null) {
+      runtime.baselineVRatio = runtime.smoothedVRatio;
+    } else if (
+      canAdaptBaseline &&
+      Math.abs(runtime.smoothedVRatio - runtime.baselineVRatio) < 0.08
+    ) {
+      runtime.baselineVRatio =
+        0.97 * runtime.baselineVRatio + 0.03 * runtime.smoothedVRatio;
+    }
+
+    if (
+      canAdaptBaseline &&
+      runtime.baselinePitch !== null &&
+      runtime.smoothedPitch !== null &&
+      Math.abs(runtime.smoothedPitch - runtime.baselinePitch) < 0.06
+    ) {
+      runtime.baselinePitch =
+        0.98 * runtime.baselinePitch + 0.02 * runtime.smoothedPitch;
+    }
+
+    const normH = clamp01(
+      runtime.smoothedHRatio - runtime.baselineHRatio + 0.5,
+    );
+    const normV = clamp01(
+      runtime.smoothedVRatio - runtime.baselineVRatio + 0.5,
+    );
+    const pitchDelta =
+      runtime.smoothedPitch !== null && runtime.baselinePitch !== null
+        ? runtime.smoothedPitch - runtime.baselinePitch
+        : 0;
+
+    const hEnterLeft = 0.36;
+    const hExitLeft = 0.44;
+    const hEnterRight = 0.64;
+    const hExitRight = 0.56;
+    const vEnterUp = 0.4;
+    const vExitUp = 0.47;
+    const vEnterDown = 0.6;
+    const vExitDown = 0.53;
+    const pitchUpAssist = -0.045;
+    const pitchDownAssist = 0.045;
+
+    if (runtime.lastDirection === "LEFT") {
+      if (normH > hExitLeft) {
+        runtime.lastDirection = "CENTER";
+      } else {
+        return "LEFT";
+      }
+    } else if (runtime.lastDirection === "RIGHT") {
+      if (normH < hExitRight) {
+        runtime.lastDirection = "CENTER";
+      } else {
+        return "RIGHT";
+      }
+    } else if (runtime.lastDirection === "UP") {
+      if (normV > vExitUp && pitchDelta > -0.03) {
+        runtime.lastDirection = "CENTER";
+      } else {
+        return "UP";
+      }
+    } else if (runtime.lastDirection === "DOWN") {
+      if (normV < vExitDown && pitchDelta < 0.03) {
+        runtime.lastDirection = "CENTER";
+      } else {
+        return "DOWN";
+      }
+    }
+
+    if (normH < hEnterLeft) {
+      runtime.lastDirection = "LEFT";
+      return "LEFT";
+    }
+    if (normH > hEnterRight) {
+      runtime.lastDirection = "RIGHT";
+      return "RIGHT";
+    }
+    const upByIrisOnly = normV < vEnterUp;
+    const upWithPitchAssist = normV < 0.45 && pitchDelta < pitchUpAssist;
+    const downByIrisOnly = normV > vEnterDown;
+    const downWithPitchAssist = normV > 0.55 && pitchDelta > pitchDownAssist;
+
+    if (upByIrisOnly || upWithPitchAssist) {
+      runtime.lastDirection = "UP";
+      return "UP";
+    }
+    if (downByIrisOnly || downWithPitchAssist) {
+      runtime.lastDirection = "DOWN";
+      return "DOWN";
+    }
+
+    runtime.lastDirection = "CENTER";
     return "CENTER";
   } catch {
-    return prev;
+    runtime.lastDirection = "CENTER";
+    return "CENTER";
   }
 }
 
@@ -276,6 +447,7 @@ const MODEL_URL =
 
 export function useFaceLandmarks(
   videoRef: React.RefObject<HTMLVideoElement | null>,
+  options: UseFaceLandmarksOptions = {},
 ) {
   const [state, setState] = useState<FaceTrackingState>({
     isLoading: true,
@@ -293,7 +465,23 @@ export function useFaceLandmarks(
   const animRef = useRef<number | undefined>(undefined);
   const activeRef = useRef(true);
   const suspicionRef = useRef(new SuspicionTracker());
-  const lastGazeRef = useRef<GazeDir>("CENTER");
+  const gazeRuntimeRef = useRef<GazeRuntimeState>({
+    smoothedHRatio: null,
+    smoothedVRatio: null,
+    baselineHRatio: null,
+    baselineVRatio: null,
+    smoothedPitch: null,
+    baselinePitch: null,
+    lastDirection: "CENTER",
+  });
+
+  useEffect(() => {
+    applyCalibrationToGazeRuntime(gazeRuntimeRef.current, options.calibration);
+  }, [
+    options.calibration?.gaze_h_baseline,
+    options.calibration?.gaze_v_baseline,
+    options.calibration?.head_pitch_baseline,
+  ]);
 
   // Initialize FaceLandmarker
   useEffect(() => {
@@ -368,42 +556,46 @@ export function useFaceLandmarks(
     const video = videoRef.current;
     const landmarker = landmarkerRef.current;
 
+    // Skip processing if model failed or not ready yet
     if (
-      video &&
-      landmarker &&
-      video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+      !landmarker ||
+      !video ||
+      video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
     ) {
-      try {
-        const results = landmarker.detectForVideo(video, performance.now());
+      animRef.current = requestAnimationFrame(processFrame);
+      return;
+    }
 
-        const faceCount = results.faceLandmarks?.length ?? 0;
-        let gaze: GazeDir = "CENTER";
-        let head: HeadDir = "CENTER";
+    try {
+      const results = landmarker.detectForVideo(video, performance.now());
 
-        if (faceCount > 0 && results.faceLandmarks[0]) {
-          const lm = results.faceLandmarks[0];
-          gaze = computeGaze(lm, lastGazeRef.current);
-          lastGazeRef.current = gaze;
-          head = computeHeadPose(lm);
-        }
+      const faceCount = results.faceLandmarks?.length ?? 0;
+      let gaze: GazeDir = "CENTER";
+      let head: HeadDir = "CENTER";
 
-        const score = suspicionRef.current.update(gaze, head, faceCount);
-        const risk = suspicionRef.current.getRiskLevel();
-
-        setState({
-          isLoading: false,
-          modelFailed: false,
-          faceCount,
-          gazeDirection: gaze,
-          headPose: head,
-          suspicionScore: score,
-          riskLevel: risk,
-          suspicionReasons: suspicionRef.current.reasons,
-          abnormalDurationMs: suspicionRef.current.abnormalDurationMs,
-        });
-      } catch (err) {
-        // Silently continue on frame errors
+      if (faceCount > 0 && results.faceLandmarks[0]) {
+        const lm = results.faceLandmarks[0];
+        gaze = computeGaze(lm, gazeRuntimeRef.current);
+        head = computeHeadPose(lm);
       }
+
+      const score = suspicionRef.current.update(gaze, head, faceCount);
+      const risk = suspicionRef.current.getRiskLevel();
+
+      setState({
+        isLoading: false,
+        modelFailed: false,
+        faceCount,
+        gazeDirection: gaze,
+        headPose: head,
+        suspicionScore: score,
+        riskLevel: risk,
+        suspicionReasons: suspicionRef.current.reasons,
+        abnormalDurationMs: suspicionRef.current.abnormalDurationMs,
+      });
+    } catch (err) {
+      // Log frame processing errors for debugging
+      console.warn("[FaceLandmarks] Frame processing error:", err);
     }
 
     animRef.current = requestAnimationFrame(processFrame);

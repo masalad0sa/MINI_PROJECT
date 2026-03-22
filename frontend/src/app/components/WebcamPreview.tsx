@@ -19,10 +19,21 @@ export function WebcamPreview({
 }: WebcamPreviewProps) {
   const internalVideoRef = useRef<HTMLVideoElement>(null);
   const videoRef = externalVideoRef ?? internalVideoRef;
+  const onReadyRef = useRef(onReady);
+  const onFaceDetectionChangeRef = useRef(onFaceDetectionChange);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [faceDetected, setFaceDetected] = useState<boolean | null>(null);
   const [isCheckingFace, setIsCheckingFace] = useState(false);
+
+  // Keep callback refs current without forcing webcam/detection effects to restart.
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
+  useEffect(() => {
+    onFaceDetectionChangeRef.current = onFaceDetectionChange;
+  }, [onFaceDetectionChange]);
 
   useEffect(() => {
     if (!isReady || error) {
@@ -61,9 +72,12 @@ export function WebcamPreview({
         );
 
         if (!response.ok) {
+          console.warn(
+            `[WebcamPreview] Face check failed with status ${response.status}`,
+          );
           if (!cancelled) {
             setFaceDetected(false);
-            onFaceDetectionChange?.(false);
+            onFaceDetectionChangeRef.current?.(false);
           }
           return;
         }
@@ -73,12 +87,13 @@ export function WebcamPreview({
 
         if (!cancelled) {
           setFaceDetected(detected);
-          onFaceDetectionChange?.(detected);
+          onFaceDetectionChangeRef.current?.(detected);
         }
-      } catch {
+      } catch (err) {
+        console.error("[WebcamPreview] Face detection error:", err);
         if (!cancelled) {
           setFaceDetected(false);
-          onFaceDetectionChange?.(false);
+          onFaceDetectionChangeRef.current?.(false);
         }
       } finally {
         if (!cancelled) {
@@ -96,7 +111,7 @@ export function WebcamPreview({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [error, isReady, onFaceDetectionChange]);
+  }, [error, isReady, videoRef]);
 
   useEffect(() => {
     async function initWebcam() {
@@ -110,13 +125,13 @@ export function WebcamPreview({
           setIsReady(true);
           setError(null);
           setFaceDetected(null);
-          onReady?.();
+          onReadyRef.current?.();
         }
       } catch (err: any) {
         setError(err.message || "Failed to access webcam");
         setIsReady(false);
         setFaceDetected(false);
-        onFaceDetectionChange?.(false);
+        onFaceDetectionChangeRef.current?.(false);
       }
     }
 
@@ -129,7 +144,7 @@ export function WebcamPreview({
           .forEach((track) => track.stop());
       }
     };
-  }, [onFaceDetectionChange, onReady]);
+  }, [videoRef]);
 
   return (
     <div className="flex flex-col gap-4">

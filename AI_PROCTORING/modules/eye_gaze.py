@@ -4,6 +4,10 @@ import numpy as np
 class EyeGazeTracker:
     def __init__(self, smooth_alpha=0.4):
         self.smooth_alpha = float(np.clip(smooth_alpha, 0.05, 0.95))
+        # Vertical gaze tends to have a smaller dynamic range than horizontal.
+        # Apply a modest gain after baseline normalization for better UP/DOWN sensitivity.
+        self.vertical_gain = 1.4
+        self.min_eye_height_px = 5.0
         self.smoothed_h_ratio = None
         self.smoothed_v_ratio = None
         self.baseline_h_ratio = None
@@ -25,7 +29,7 @@ class EyeGazeTracker:
         self.last_raw_v_ratio = 0.5
         self.last_normalized_v_ratio = 0.5
 
-    def get_gaze_direction(self, landmarks, img_w, img_h):
+    def get_gaze_direction(self, landmarks, img_w, img_h, head_pitch=None):
         try:
             left_h_ratio, left_width = self._eye_h_ratio(
                 landmarks,
@@ -42,17 +46,17 @@ class EyeGazeTracker:
                 img_w=img_w,
             )
             # Vertical gaze: iris Y relative to upper/lower eyelid
-            left_v_ratio = self._eye_v_ratio(
+            left_v_ratio, left_height = self._eye_v_ratio(
                 landmarks,
-                upper_idx=159,   # left eye upper lid
-                lower_idx=145,   # left eye lower lid
+                upper_indices=(159, 160, 161),
+                lower_indices=(145, 153, 154),
                 iris_indices=(468, 469, 470, 471, 472),
                 img_h=img_h,
             )
-            right_v_ratio = self._eye_v_ratio(
+            right_v_ratio, right_height = self._eye_v_ratio(
                 landmarks,
-                upper_idx=386,   # right eye upper lid
-                lower_idx=374,   # right eye lower lid
+                upper_indices=(386, 387, 388),
+                lower_indices=(374, 380, 381),
                 iris_indices=(473, 474, 475, 476, 477),
                 img_h=img_h,
             )
@@ -88,24 +92,45 @@ class EyeGazeTracker:
         self.last_normalized_ratio = norm_h
 
         # --- Vertical gaze ---
-        raw_v = float(np.clip((left_v_ratio + right_v_ratio) / 2.0, 0.0, 1.0))
-        self.last_raw_v_ratio = raw_v
-        if self.smoothed_v_ratio is None:
-            self.smoothed_v_ratio = raw_v
-        else:
-            self.smoothed_v_ratio = (
-                (1.0 - self.smooth_alpha) * self.smoothed_v_ratio
-                + self.smooth_alpha * raw_v
-            )
+        # If eyelid gap is too small (blink/squint), keep last stable value instead
+        # of injecting noisy vertical spikes.
+        valid_vertical = (
+            left_height >= self.min_eye_height_px and right_height >= self.min_eye_height_px
+        )
+        if valid_vertical:
+            raw_v = float(np.clip((left_v_ratio + right_v_ratio) / 2.0, 0.0, 1.0))
+            self.last_raw_v_ratio = raw_v
+            if self.smoothed_v_ratio is None:
+                self.smoothed_v_ratio = raw_v
+            else:
+                self.smoothed_v_ratio = (
+                    (1.0 - self.smooth_alpha) * self.smoothed_v_ratio
+                    + self.smooth_alpha * raw_v
+                )
+        elif self.smoothed_v_ratio is None:
+            self.smoothed_v_ratio = self.last_raw_v_ratio
 
         if self.baseline_v_ratio is None:
             self.baseline_v_ratio = self.smoothed_v_ratio
-        elif abs(self.smoothed_v_ratio - self.baseline_v_ratio) < 0.08:
-            self.baseline_v_ratio = (0.97 * self.baseline_v_ratio) + (0.03 * self.smoothed_v_ratio)
+        elif abs(self.smoothed_v_ratio - self.baseline_v_ratio) < 0.06:
+            self.baseline_v_ratio = (0.98 * self.baseline_v_ratio) + (0.02 * self.smoothed_v_ratio)
 
         norm_v = float(
-            np.clip(self.smoothed_v_ratio - self.baseline_v_ratio + 0.5, 0.0, 1.0)
+            np.clip(
+                ((self.smoothed_v_ratio - self.baseline_v_ratio) * self.vertical_gain) + 0.5,
+                0.0,
+                1.0,
+            )
         )
+
+        # Head pitch changes apparent vertical iris position. Damp the vertical
+        # gaze signal as pitch magnitude increases to avoid false LOOKING UP/DOWN
+        # when the user is mostly moving their head.
+        if head_pitch is not None:
+            pitch_mag = abs(float(head_pitch))
+            pitch_suppression = float(np.clip((pitch_mag - 0.06) / 0.18, 0.0, 1.0))
+            norm_v = 0.5 + ((norm_v - 0.5) * (1.0 - pitch_suppression))
+
         self.last_normalized_v_ratio = norm_v
 
         # --- Direction decision with hysteresis ---
@@ -116,10 +141,10 @@ class EyeGazeTracker:
         h_exit_right = 0.56
 
         # Vertical thresholds
-        v_enter_up = 0.38
-        v_exit_up = 0.45
-        v_enter_down = 0.62
-        v_exit_down = 0.55
+        v_enter_up = 0.44
+        v_exit_up = 0.47
+        v_enter_down = 0.56
+        v_exit_down = 0.53
 
         # Hysteresis: stay in current direction until clearly returning to center
         if self.last_direction == "LOOKING LEFT":
@@ -150,10 +175,15 @@ class EyeGazeTracker:
         if norm_h > h_enter_right:
             self.last_direction = "LOOKING RIGHT"
             return "LOOKING RIGHT"
-        if norm_v < v_enter_up:
+        # Suppress vertical labels when head pitch is large; rely on head pose
+        # labels in that case instead of misclassifying as gaze UP/DOWN.
+        pitch_block_vertical = (
+            head_pitch is not None and abs(float(head_pitch)) >= 0.18
+        )
+        if (not pitch_block_vertical) and norm_v < v_enter_up:
             self.last_direction = "LOOKING UP"
             return "LOOKING UP"
-        if norm_v > v_enter_down:
+        if (not pitch_block_vertical) and norm_v > v_enter_down:
             self.last_direction = "LOOKING DOWN"
             return "LOOKING DOWN"
 
@@ -175,15 +205,17 @@ class EyeGazeTracker:
 
         return float(np.clip(ratio, 0.0, 1.0)), width
 
-    def _eye_v_ratio(self, landmarks, upper_idx, lower_idx, iris_indices, img_h):
+    def _eye_v_ratio(self, landmarks, upper_indices, lower_indices, iris_indices, img_h):
         """Vertical iris position: 0 = upper lid, 1 = lower lid."""
-        y_upper = float(landmarks[upper_idx].y * img_h)
-        y_lower = float(landmarks[lower_idx].y * img_h)
+        y_upper_values = [float(landmarks[idx].y * img_h) for idx in upper_indices]
+        y_lower_values = [float(landmarks[idx].y * img_h) for idx in lower_indices]
+        y_upper = float(np.mean(y_upper_values))
+        y_lower = float(np.mean(y_lower_values))
         iris_y_values = [float(landmarks[idx].y * img_h) for idx in iris_indices]
         y_iris = float(np.mean(iris_y_values))
 
         height = max(1.0, abs(y_lower - y_upper))
         ratio = (y_iris - y_upper) / height
 
-        return float(np.clip(ratio, 0.0, 1.0))
+        return float(np.clip(ratio, 0.0, 1.0)), float(height)
 
