@@ -7,6 +7,7 @@ import {
   CheckCircle,
   AlertCircle,
   User,
+  Trash2,
   X,
 } from "lucide-react";
 import * as api from "../../lib/api";
@@ -27,6 +28,7 @@ export function UserManagement() {
   const [activeTab, setActiveTab] = useState("all");
   const [search, setSearch] = useState("");
   const [suspendModal, setSuspendModal] = useState<{ userId: string; name: string } | null>(null);
+  const [deleteModal, setDeleteModal] = useState<{ userId: string; name: string; role: string } | null>(null);
   const [suspendReason, setSuspendReason] = useState("");
   const [actionLoading, setActionLoading] = useState(false);
 
@@ -83,6 +85,23 @@ export function UserManagement() {
       }
     } catch (err) {
       console.error("Failed to unsuspend", err);
+    } finally {
+      setActionLoading(false);
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!deleteModal) return;
+    setActionLoading(true);
+    try {
+      const res = await api.deleteUser(deleteModal.userId);
+      if (res.success) {
+        setUsers(prev => prev.filter(u => u._id !== deleteModal.userId));
+        loadUsers(activeTab, false);
+        setDeleteModal(null);
+      }
+    } catch (err) {
+      console.error("Failed to delete user", err);
     } finally {
       setActionLoading(false);
     }
@@ -204,23 +223,32 @@ export function UserManagement() {
                       </td>
                       <td className="px-6 py-4 text-right">
                         {user.role !== "admin" && (
-                          user.isSuspended ? (
+                          <div className="inline-flex items-center gap-2">
+                            {user.isSuspended ? (
+                              <button
+                                onClick={() => handleUnsuspend(user._id)}
+                                disabled={actionLoading}
+                                className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
+                              >
+                                Unsuspend
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => setSuspendModal({ userId: user._id, name: user.name })}
+                                disabled={actionLoading}
+                                className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+                              >
+                                Suspend
+                              </button>
+                            )}
                             <button
-                              onClick={() => handleUnsuspend(user._id)}
+                              onClick={() => setDeleteModal({ userId: user._id, name: user.name, role: user.role })}
                               disabled={actionLoading}
-                              className="px-3 py-1.5 bg-green-600 text-white rounded-lg text-xs font-medium hover:bg-green-700 transition-colors disabled:opacity-50"
+                              className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-xs font-medium hover:bg-black transition-colors disabled:opacity-50"
                             >
-                              Unsuspend
+                              Delete
                             </button>
-                          ) : (
-                            <button
-                              onClick={() => setSuspendModal({ userId: user._id, name: user.name })}
-                              disabled={actionLoading}
-                              className="px-3 py-1.5 bg-red-600 text-white rounded-lg text-xs font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
-                            >
-                              Suspend
-                            </button>
-                          )
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -281,6 +309,41 @@ export function UserManagement() {
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
               >
                 {actionLoading ? "Suspending..." : "Confirm Suspend"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Modal */}
+      {deleteModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                <Trash2 className="w-5 h-5 text-red-600" />
+                Delete User
+              </h3>
+              <button onClick={() => setDeleteModal(null)} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-sm text-slate-600 mb-4">
+              Are you sure you want to permanently delete <strong>{deleteModal.name}</strong> ({deleteModal.role})? This action cannot be undone.
+            </p>
+            <div className="flex gap-3 mt-4">
+              <button
+                onClick={() => setDeleteModal(null)}
+                className="flex-1 px-4 py-2 bg-slate-200 text-slate-700 rounded-lg font-medium hover:bg-slate-300 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteUser}
+                disabled={actionLoading}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {actionLoading ? "Deleting..." : "Confirm Delete"}
               </button>
             </div>
           </div>

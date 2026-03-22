@@ -10,4 +10,8 @@ ultralytics
 # l2cs-net
 # torch
 # torchvision
+# Optional shadow ML scoring (legacy miniproject-inspired):
+# pandas
+# scikit-learn
+# joblib
 # protobuf is managed by mediapipe/ultralytics, avoiding manual pin to prevent conflicts

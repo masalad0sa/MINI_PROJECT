@@ -2,7 +2,6 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 import { LoginScreen } from './LoginScreen';
-import { AuthProvider } from '../../lib/AuthContext';
 
 // Mock the AuthContext so we can spy on the login function
 const mockLogin = vi.fn().mockResolvedValue(undefined);
@@ -45,7 +44,7 @@ describe('LoginScreen Component', () => {
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith('student@example.com', 'password123');
+      expect(mockLogin).toHaveBeenCalledWith('student@example.com', 'password123', 'student');
     });
   });
 });

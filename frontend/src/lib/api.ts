@@ -364,3 +364,15 @@ export async function unsuspendStudent(studentId: string) {
   });
   return handleResponse(res);
 }
+
+export async function deleteUser(userId: string) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
+    method: "DELETE",
+    headers,
+  });
+  return handleResponse(res);
+}

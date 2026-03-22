@@ -170,6 +170,47 @@ export const getAllUsers = async (req, res) => {
   }
 };
 
+export const deleteUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).select("_id role");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.role === "admin") {
+      return res.status(403).json({ message: "Admin users cannot be deleted" });
+    }
+
+    if (user.role === "student") {
+      await Submission.deleteMany({ studentId: user._id });
+    }
+
+    if (user.role === "examiner") {
+      const createdExams = await Exam.find({ createdBy: user._id }).select("_id");
+      const examIds = createdExams.map((exam) => exam._id);
+
+      if (examIds.length > 0) {
+        await Submission.deleteMany({ examId: { $in: examIds } });
+        await Exam.deleteMany({ _id: { $in: examIds } });
+      }
+    }
+
+    await User.findByIdAndDelete(user._id);
+
+    res.status(200).json({
+      success: true,
+      message: "User deleted successfully",
+      data: { userId: user._id, role: user.role },
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to delete user", error: error.message });
+  }
+};
+
 export const suspendStudent = async (req, res) => {
   try {
     const { studentId } = req.params;

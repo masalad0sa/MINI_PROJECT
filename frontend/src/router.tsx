@@ -8,6 +8,7 @@ import {
 } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { LoginScreen } from "./app/components/LoginScreen";
+import { AdminLoginScreen } from "./app/components/AdminLoginScreen";
 import { SignUpScreen } from "./app/components/SignUpScreen";
 import { StudentDashboard } from "./app/components/StudentDashboard";
 import { PreExamCheck } from "./app/components/PreExamCheck";
@@ -30,7 +31,14 @@ function ProtectedRoute() {
   const location = useLocation();
 
   if (!user) {
-    return <Navigate to="/" state={{ from: location }} replace />;
+    const isAdminPath = location.pathname.startsWith("/admin");
+    return (
+      <Navigate
+        to={isAdminPath ? "/admin-login" : "/"}
+        state={{ from: location }}
+        replace
+      />
+    );
   }
 
   return <Outlet />;
@@ -40,7 +48,11 @@ function ProtectedRoute() {
 function AdminRoute() {
   const { user } = useAuth();
 
-  if (!user || user.role !== "admin") {
+  if (!user) {
+    return <Navigate to="/admin-login" replace />;
+  }
+
+  if (user.role !== "admin") {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -96,6 +108,7 @@ export function AppRouter() {
         {/* Public routes */}
         <Route element={<PublicRoute />}>
           <Route path="/" element={<LoginScreen />} />
+          <Route path="/admin-login" element={<AdminLoginScreen />} />
           <Route path="/signup" element={<SignUpScreen />} />
         </Route>
 

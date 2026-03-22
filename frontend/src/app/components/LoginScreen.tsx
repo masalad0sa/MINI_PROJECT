@@ -3,9 +3,17 @@ import { useAuth } from "../../lib/AuthContext";
 import { Link } from "react-router-dom";
 import { AlertCircle, Loader, LogIn } from "lucide-react";
 
+type LoginRole = "student" | "examiner";
+
+const DEMO_EMAILS: Record<LoginRole, string> = {
+  student: "student@example.com",
+  examiner: "examiner@example.com",
+};
+
 export function LoginScreen() {
   const { login, isLoading, error } = useAuth();
-  const [email, setEmail] = useState("student@example.com");
+  const [selectedRole, setSelectedRole] = useState<LoginRole>("student");
+  const [email, setEmail] = useState(DEMO_EMAILS.student);
   const [password, setPassword] = useState("password123");
   const [localError, setLocalError] = useState("");
 
@@ -13,16 +21,21 @@ export function LoginScreen() {
     e.preventDefault();
     setLocalError("");
     try {
-      await login(email, password);
+      await login(email, password, selectedRole);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "Login failed");
     }
   };
 
+  const handleRoleChange = (role: LoginRole) => {
+    setSelectedRole(role);
+    setLocalError("");
+    setEmail(DEMO_EMAILS[role]);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-blue-100 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        {/* Logo Section */}
         <div className="text-center mb-8">
           <div className="w-16 h-16 bg-blue-600 rounded-lg flex items-center justify-center mx-auto mb-4 shadow-lg">
             <span className="text-white font-bold text-2xl">SP</span>
@@ -30,15 +43,45 @@ export function LoginScreen() {
           <h1 className="text-3xl font-bold text-slate-800 mb-2">
             SmartProctor
           </h1>
-          <p className="text-slate-600">Exam Proctoring System</p>
+          <p className="text-slate-600">Student and Examiner Login</p>
         </div>
 
-        {/* Login Form */}
         <form
           onSubmit={handleSubmit}
           className="bg-white rounded-xl shadow-lg p-8 space-y-6"
         >
-          {/* Error Messages */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Login As
+            </label>
+            <div className="grid grid-cols-2 gap-2 rounded-lg bg-slate-100 p-1">
+              <button
+                type="button"
+                onClick={() => handleRoleChange("student")}
+                disabled={isLoading}
+                className={`rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+                  selectedRole === "student"
+                    ? "bg-white text-blue-700 shadow-sm"
+                    : "text-slate-600 hover:text-slate-800"
+                }`}
+              >
+                Student
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRoleChange("examiner")}
+                disabled={isLoading}
+                className={`rounded-md px-3 py-2 text-sm font-semibold transition-colors ${
+                  selectedRole === "examiner"
+                    ? "bg-white text-blue-700 shadow-sm"
+                    : "text-slate-600 hover:text-slate-800"
+                }`}
+              >
+                Examiner
+              </button>
+            </div>
+          </div>
+
           {(error || localError) && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
               <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
@@ -51,7 +94,6 @@ export function LoginScreen() {
             </div>
           )}
 
-          {/* Email Input */}
           <div>
             <label
               htmlFor="email"
@@ -70,11 +112,10 @@ export function LoginScreen() {
               disabled={isLoading}
             />
             <p className="text-xs text-slate-500 mt-1">
-              Demo: student@example.com
+              Demo: {DEMO_EMAILS[selectedRole]}
             </p>
           </div>
 
-          {/* Password Input */}
           <div>
             <label
               htmlFor="password"
@@ -88,14 +129,13 @@ export function LoginScreen() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition"
-              placeholder="••••••••"
+              placeholder="********"
               required
               disabled={isLoading}
             />
             <p className="text-xs text-slate-500 mt-1">Demo: password123</p>
           </div>
 
-          {/* Submit Button */}
           <button
             type="submit"
             disabled={isLoading}
@@ -114,32 +154,46 @@ export function LoginScreen() {
             )}
           </button>
 
-          {/* Info Box */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
             <p className="text-sm text-blue-900 font-medium mb-2">
               Demo Credentials:
             </p>
             <ul className="text-xs text-blue-800 space-y-1">
               <li>
-                📧 <span className="font-mono">student@example.com</span>
+                Student: <span className="font-mono">student@example.com</span>
               </li>
               <li>
-                🔐 <span className="font-mono">password123</span>
+                Examiner:{" "}
+                <span className="font-mono">examiner@example.com</span>
+              </li>
+              <li>
+                Password: <span className="font-mono">password123</span>
               </li>
             </ul>
           </div>
-          
+
           <div className="text-center mt-4">
             <p className="text-sm text-slate-600">
-              Don't have an account?{" "}
-              <Link to="/signup" className="text-blue-600 hover:text-blue-800 font-medium">
+              Don&apos;t have an account?{" "}
+              <Link
+                to="/signup"
+                className="text-blue-600 hover:text-blue-800 font-medium"
+              >
                 Sign up
+              </Link>
+            </p>
+            <p className="text-sm text-slate-600 mt-2">
+              Admin?{" "}
+              <Link
+                to="/admin-login"
+                className="text-blue-600 hover:text-blue-800 font-medium"
+              >
+                Use Admin Login
               </Link>
             </p>
           </div>
         </form>
 
-        {/* Footer */}
         <p className="text-center text-slate-600 text-sm mt-6">
           Part of SmartProctor Exam Proctoring System
         </p>

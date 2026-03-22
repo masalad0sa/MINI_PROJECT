@@ -19,7 +19,11 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (
+    email: string,
+    password: string,
+    expectedRole?: User["role"],
+  ) => Promise<void>;
   logout: () => void;
   register: (
     email: string,
@@ -107,23 +111,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await api.login(email, password);
-      if (res?.success && res?.token) {
-        api.setToken(res.token);
-        setUser(res.user);
-      } else {
-        setError(res?.message || "Login failed");
+  const login = useCallback(
+    async (email: string, password: string, expectedRole?: User["role"]) => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const res = await api.login(email, password);
+        if (res?.success && res?.token && res?.user) {
+          const actualRole = res.user.role as User["role"];
+          if (expectedRole && actualRole !== expectedRole) {
+            const roleLabel = expectedRole.charAt(0).toUpperCase() + expectedRole.slice(1);
+            const message = `${roleLabel} login only allows ${expectedRole} accounts.`;
+            setError(message);
+            throw new Error(message);
+          }
+
+          api.setToken(res.token);
+          setUser(res.user);
+          return;
+        }
+
+        const message = res?.message || "Login failed";
+        setError(message);
+        throw new Error(message);
+      } catch (err: any) {
+        const message = err?.message || "Login error";
+        setError(message);
+        throw err instanceof Error ? err : new Error(message);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err: any) {
-      setError(err.message || "Login error");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
     try {

@@ -9,7 +9,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -24,6 +24,7 @@ from modules.behavior import BehaviorAnalyzer
 from modules.face_detection import FaceDetector
 from modules.object_detector import ObjectDetector
 from modules.logger import ExamLogger
+from modules.ml_model import MLModel
 
 
 app = FastAPI(title="AI Proctoring Service", version="2.0")
@@ -54,7 +55,19 @@ print("Initializing AI Proctoring CV models...")
 face_detector = FaceDetector()
 object_detector = ObjectDetector()
 exam_logger = ExamLogger()
+ml_shadow_model = MLModel()
+ML_SHADOW_ENABLED = os.getenv("AI_ML_SHADOW_ENABLED", "0").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 print("AI Proctoring CV models initialized")
+if ML_SHADOW_ENABLED:
+    if ml_shadow_model.is_loaded:
+        print(f"[ML Shadow] Enabled with model: {ml_shadow_model.model_path}")
+    else:
+        print(f"[ML Shadow] Enabled but model unavailable: {ml_shadow_model.load_error}")
 
 # Directories
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -160,6 +173,14 @@ def _risk_from_score(score: int, face_count: int, detected_objects: List[str]) -
     return "LOW"
 
 
+def _phone_detected(detected_objects: List[str]) -> bool:
+    for item in detected_objects:
+        label = str(item).strip().lower()
+        if "phone" in label:
+            return True
+    return False
+
+
 def _violation_type(face_count: int, detected_objects: List[str], score: int) -> Optional[str]:
     if detected_objects:
         return "PROHIBITED_OBJECT"
@@ -193,6 +214,9 @@ async def health():
         "version": "2.0",
         "source": "AI_PROCTORING/server.py",
         "sessions_active": len(SESSION_STATES),
+        "ml_shadow_enabled": ML_SHADOW_ENABLED,
+        "ml_shadow_model_loaded": ml_shadow_model.is_loaded,
+        "ml_shadow_error": ml_shadow_model.load_error,
     }
 
 
@@ -392,6 +416,7 @@ async def process_frame(data: FrameData):
             "should_log_violation": should_log,
             "objects_only": True,
             "tracking_only": False,
+            "ml_shadow": None,
             "processed_image": None,
         }
 
@@ -427,6 +452,20 @@ async def process_frame(data: FrameData):
 
     # Log the event
     exam_logger.log(gaze, head, angle, face_count, score, risk_level, detected_objects)
+
+    ml_shadow: Optional[Dict[str, Any]] = None
+    if ML_SHADOW_ENABLED and ml_shadow_model.is_loaded:
+        ml_shadow = ml_shadow_model.predict(
+            angle=float(angle),
+            face_count=int(face_count),
+            phone_detected=_phone_detected(detected_objects),
+            multi_face=1 if face_count > 1 else 0,
+            suspicion_score=int(score),
+            gaze_h_ratio=float(result.gaze_h_ratio),
+            gaze_v_ratio=float(result.gaze_v_ratio),
+            head_yaw=float(result.head_yaw),
+            head_pitch=float(result.head_pitch),
+        )
 
     # Encode image only when explicitly requested or when logging a violation.
     should_attach_image = include_processed_image or should_log
@@ -496,6 +535,7 @@ async def process_frame(data: FrameData):
         "hand_alerts": result.hand_alerts,
         "objects_only": False,
         "tracking_only": tracking_only_mode,
+        "ml_shadow": ml_shadow,
         "processed_image": processed_image,
     }
 
