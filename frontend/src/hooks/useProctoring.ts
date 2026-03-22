@@ -9,6 +9,9 @@ interface ProctoringState {
   facesDetected: number;
   headPose: "CENTER" | "LEFT" | "RIGHT" | "UP" | "DOWN";
   gazeDirection: "CENTER" | "LEFT" | "RIGHT" | "UP" | "DOWN";
+  headYaw: number | null;
+  headPitch: number | null;
+  gazeVerticalValue: number | null;
   suspicionScore: number;
   prohibitedObjects: string[];
   riskLevel: "LOW" | "MEDIUM" | "HIGH";
@@ -31,6 +34,8 @@ export interface ViolationEvent {
 interface UseProctoringOptions {
   examId?: string;
   sessionId?: string;
+  /** Fast loop for gaze/head overlays (ms). Default 180. */
+  trackingIntervalMs?: number;
   /** How often to send frames to server for object detection (ms). Default 2000. */
   objectDetectionIntervalMs?: number;
   /** Maximum locally queued frames when network is unstable. */
@@ -52,7 +57,7 @@ interface UseProctoringOptions {
 interface QueuedFrame {
   image: string;
   capturedAt: number;
-  useServerFallback: boolean;
+  mode: "tracking" | "objects";
   examRouteId: string;
   sessionId: string | null;
   calibration: Record<string, number> | null;
@@ -86,6 +91,9 @@ export const useProctoring = (
     faceCount: number;
     gazeDirection: string;
     headDirection: string;
+    headYaw: number | null;
+    headPitch: number | null;
+    gazeVerticalValue: number | null;
     suspicionScore: number;
     riskLevel: string;
   } | null>(null);
@@ -108,6 +116,7 @@ export const useProctoring = (
   const consecutiveErrors = useRef(0);
   const [aiServiceAvailable, setAiServiceAvailable] = useState(true);
   const adaptiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastObjectRequestAt = useRef(0);
 
   // ── Calibration: send with first frame only ──
   const calibrationSent = useRef(false);
@@ -137,15 +146,15 @@ export const useProctoring = (
     calibrationData.current = null;
   }, [options.calibration, options.examId]);
 
-  /** Compute next interval: faster when server is fast, slower when slow / erroring. */
+  /** Compute next tracking interval: low-latency by default with light backoff. */
   const getAdaptiveIntervalMs = useCallback(() => {
-    const base = options.objectDetectionIntervalMs ?? 2000;
-    if (consecutiveErrors.current >= 3) return Math.min(base * 3, 10000); // back off heavily
-    if (consecutiveErrors.current >= 1) return Math.min(base * 2, 6000);
-    if (lastRttMs.current < 500) return Math.max(base * 0.75, 1500);
-    if (lastRttMs.current > 3000) return Math.min(base * 2, 5000);
+    const base = Math.max(80, options.trackingIntervalMs ?? 180);
+    if (consecutiveErrors.current >= 3) return Math.min(base * 4, 1500);
+    if (consecutiveErrors.current >= 1) return Math.min(base * 2, 800);
+    if (lastRttMs.current > 1200) return Math.min(base * 2, 600);
+    if (lastRttMs.current > 700) return Math.min(base * 1.5, 450);
     return base;
-  }, [options.objectDetectionIntervalMs]);
+  }, [options.trackingIntervalMs]);
 
   // Always use server-side analysis for face/gaze/head CV signals.
   const serverAnalysisActive = true;
@@ -154,10 +163,12 @@ export const useProctoring = (
   const handleServerFrame = useCallback(
     (data: any, frame: QueuedFrame) => {
       const objects = Array.isArray(data.objects) ? data.objects : [];
-      setProhibitedObjects(objects);
+      if (frame.mode === "objects") {
+        setProhibitedObjects(objects);
+      }
 
       if (
-        frame.useServerFallback &&
+        frame.mode === "tracking" &&
         typeof data.face_count === "number" &&
         data.face_count >= 0
       ) {
@@ -171,6 +182,11 @@ export const useProctoring = (
             typeof data.head_direction === "string"
               ? data.head_direction
               : "HEAD STRAIGHT",
+          headYaw: typeof data.head_yaw === "number" ? data.head_yaw : null,
+          headPitch:
+            typeof data.head_pitch === "number" ? data.head_pitch : null,
+          gazeVerticalValue:
+            typeof data.gaze_v_ratio === "number" ? data.gaze_v_ratio : null,
           suspicionScore:
             typeof data.suspicion_score === "number" ? data.suspicion_score : 0,
           riskLevel:
@@ -244,8 +260,11 @@ export const useProctoring = (
         headers.Authorization = `Bearer ${token}`;
       }
 
-      const maxAttempts = Math.max(1, options.maxRetryAttempts ?? 3);
-      let delayMs = 400;
+      const isTrackingFrame = frame.mode === "tracking";
+      const maxAttempts = isTrackingFrame
+        ? 1
+        : Math.max(1, options.maxRetryAttempts ?? 3);
+      let delayMs = isTrackingFrame ? 0 : 400;
       let lastError: unknown = null;
 
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -254,20 +273,28 @@ export const useProctoring = (
           const bodyObj: Record<string, unknown> = {
             image: frame.image,
             sessionId: frame.sessionId,
-            objectsOnly: !frame.useServerFallback,
+            objectsOnly: frame.mode === "objects",
+            trackingOnly: frame.mode === "tracking",
+            includeProcessedImage: false,
           };
           if (frame.calibration) {
             bodyObj.calibration = frame.calibration;
           }
 
-          const response = await fetch(
-            `${apiBase}/proctoring/${frame.examRouteId}/frame`,
-            {
+          const controller = new AbortController();
+          const timeoutMs = isTrackingFrame ? 3000 : 10000;
+          const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+          let response: Response;
+          try {
+            response = await fetch(`${apiBase}/proctoring/${frame.examRouteId}/frame`, {
               method: "POST",
               headers,
               body: JSON.stringify(bodyObj),
-            },
-          );
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timeoutId);
+          }
 
           if (response.ok) {
             const data = await response.json();
@@ -300,7 +327,7 @@ export const useProctoring = (
 
       return {
         ok: false as const,
-        dropFrame: false,
+        dropFrame: isTrackingFrame,
         status: null,
         error: lastError,
       };
@@ -313,7 +340,7 @@ export const useProctoring = (
     if (frameQueueRef.current.length === 0) return;
 
     requestInFlight.current = true;
-    const maxFramesPerFlush = 3;
+    const maxFramesPerFlush = 1;
 
     try {
       let processed = 0;
@@ -375,12 +402,28 @@ export const useProctoring = (
       return;
     }
 
+    const now = Date.now();
+    const objectIntervalMs = Math.max(
+      500,
+      options.objectDetectionIntervalMs ?? 2000,
+    );
+    const shouldRunObjectDetection =
+      now - lastObjectRequestAt.current >= objectIntervalMs;
+    const mode: QueuedFrame["mode"] = shouldRunObjectDetection
+      ? "objects"
+      : "tracking";
+    if (shouldRunObjectDetection) {
+      lastObjectRequestAt.current = now;
+    }
+
     const video = videoRef.current;
     const canvas = frameCanvasRef.current;
     const captureWidth =
-      options.captureWidth ?? (serverAnalysisActive ? 480 : 640);
+      options.captureWidth ??
+      (mode === "tracking" ? 432 : serverAnalysisActive ? 480 : 640);
     const captureHeight =
-      options.captureHeight ?? (serverAnalysisActive ? 360 : 480);
+      options.captureHeight ??
+      (mode === "tracking" ? 324 : serverAnalysisActive ? 360 : 480);
     canvas.width = captureWidth;
     canvas.height = captureHeight;
     const ctx = canvas.getContext("2d");
@@ -388,13 +431,14 @@ export const useProctoring = (
 
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
     const imageQuality =
-      options.imageQuality ?? (serverAnalysisActive ? 0.7 : 0.85);
+      options.imageQuality ??
+      (mode === "tracking" ? 0.6 : serverAnalysisActive ? 0.7 : 0.85);
     const imageData = canvas.toDataURL("image/jpeg", imageQuality);
 
     const queuedFrame: QueuedFrame = {
       image: imageData,
-      capturedAt: Date.now(),
-      useServerFallback: serverAnalysisActive,
+      capturedAt: now,
+      mode,
       examRouteId: options.examId || "live",
       sessionId: options.sessionId || null,
       calibration:
@@ -403,10 +447,7 @@ export const useProctoring = (
           : null,
     };
 
-    const maxQueuedFrames = Math.max(
-      1,
-      options.maxQueuedFrames ?? (serverAnalysisActive ? 2 : 10),
-    );
+    const maxQueuedFrames = Math.max(1, options.maxQueuedFrames ?? 1);
     while (frameQueueRef.current.length >= maxQueuedFrames) {
       frameQueueRef.current.shift();
     }
@@ -419,6 +460,7 @@ export const useProctoring = (
     options.captureWidth,
     options.examId,
     options.imageQuality,
+    options.objectDetectionIntervalMs,
     options.maxQueuedFrames,
     options.sessionId,
     serverAnalysisActive,
@@ -428,6 +470,7 @@ export const useProctoring = (
   // ── Adaptive interval scheduling ──
   useEffect(() => {
     proctoringActive.current = true;
+    lastObjectRequestAt.current = 0;
 
     const scheduleNext = () => {
       if (!proctoringActive.current) return;
@@ -475,6 +518,11 @@ export const useProctoring = (
     gazeDirection: useServerState
       ? mapServerDirection(serverFaceState.gazeDirection)
       : faceState.gazeDirection,
+    headYaw: useServerState ? serverFaceState.headYaw : null,
+    headPitch: useServerState ? serverFaceState.headPitch : null,
+    gazeVerticalValue: useServerState
+      ? serverFaceState.gazeVerticalValue
+      : null,
     suspicionScore: useServerState
       ? serverFaceState.suspicionScore
       : faceState.suspicionScore,

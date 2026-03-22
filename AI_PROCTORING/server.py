@@ -62,7 +62,7 @@ EVIDENCE_DIR = os.path.join(BASE_DIR, "evidence")
 os.makedirs(EVIDENCE_DIR, exist_ok=True)
 
 # Session management
-STATE_TTL_SECONDS = 30 * 60
+STATE_TTL_SECONDS = 60  # Reduced to 60 seconds for faster threshold updates during dev (was 30*60)
 VIOLATION_COOLDOWN_SECONDS = 8
 
 
@@ -71,6 +71,8 @@ class FrameData(BaseModel):
     session_id: Optional[str] = Field(None, alias="sessionId")
     exam_id: Optional[str] = Field(None, alias="examId")
     objects_only: bool = Field(False, alias="objectsOnly")
+    tracking_only: bool = Field(False, alias="trackingOnly")
+    include_processed_image: bool = Field(False, alias="includeProcessedImage")
     calibration: Optional[Dict[str, float]] = None
 
     class Config:
@@ -88,7 +90,7 @@ class SystemCheckData(BaseModel):
 @dataclass
 class SessionState:
     """Per-session state with HolisticDetector for unified tracking."""
-    holistic: HolisticDetector = field(default_factory=HolisticDetector)
+    holistic: HolisticDetector = field(default_factory=lambda: HolisticDetector(static_image_mode=False))
     behavior_analyzer: BehaviorAnalyzer = field(default_factory=BehaviorAnalyzer)
     last_violation_type: Optional[str] = None
     last_violation_at: float = 0.0
@@ -165,7 +167,7 @@ def _violation_type(face_count: int, detected_objects: List[str], score: int) ->
         return "MULTIPLE_FACES"
     if face_count == 0:
         return "NO_FACE"
-    if score >= 40:
+    if score >= 100:
         return "HIGH_SUSPICION"
     return None
 
@@ -194,21 +196,41 @@ async def health():
     }
 
 
+@app.post("/reset_session")
+async def reset_session(data: FrameData):
+    """Reset session state to pick up new threshold values."""
+    session_key = _build_session_key(data)
+    with STATE_LOCK:
+        if session_key in SESSION_STATES:
+            try:
+                SESSION_STATES[session_key].holistic.close()
+            except Exception:
+                pass
+            del SESSION_STATES[session_key]
+    return {"success": True, "message": "Session reset successfully"}
+
+
 @app.post("/system_check")
 async def system_check(data: SystemCheckData):
     frame = _decode_frame(data.image)
+    # Flip frame horizontally to match webcam mirror behavior
+    frame = cv2.flip(frame, 1)
     _, face_count = face_detector.detect_faces(frame)
     return {"success": True, "face_count": int(face_count)}
 
 
 @app.post("/calibrate")
 async def calibrate(data: CalibrationData):
-    """Calibrate gaze baselines from multiple frames."""
+    """Calibrate gaze baselines from multiple frames.
+
+    Validates that the user was looking straight ahead during calibration.
+    If extreme values are detected, returns error asking user to recalibrate.
+    """
     if not data.images or len(data.images) < 2:
         raise HTTPException(status_code=400, detail="Need at least 2 calibration frames")
 
     # Use a temporary holistic detector for calibration
-    temp_holistic = HolisticDetector()
+    temp_holistic = HolisticDetector(static_image_mode=False)
     h_ratios = []
     v_ratios = []
     yaw_values = []
@@ -217,6 +239,8 @@ async def calibrate(data: CalibrationData):
     for img_data in data.images[:20]:  # Max 20 frames
         try:
             frame = _decode_frame(img_data)
+            # Flip frame horizontally to match webcam mirror behavior
+            frame = cv2.flip(frame, 1)
             result = temp_holistic.analyze(frame)
             if result.face_detected:
                 h_ratios.append(result.gaze_h_ratio)
@@ -231,7 +255,7 @@ async def calibrate(data: CalibrationData):
     if len(h_ratios) < 2:
         return {
             "success": False,
-            "message": "Could not detect face in enough frames",
+            "message": "Could not detect face in enough frames. Please ensure your face is clearly visible.",
             "baselines": {
                 "gaze_h_baseline": 0.5,
                 "gaze_v_baseline": 0.5,
@@ -241,14 +265,79 @@ async def calibrate(data: CalibrationData):
             },
         }
 
+    # Calculate median values
+    median_h = float(np.median(h_ratios))
+    median_v = float(np.median(v_ratios))
+    median_yaw = float(np.median(yaw_values))
+    median_pitch = float(np.median(pitch_values))
+
+    # Validation: check if user was looking straight ahead
+    # Acceptable ranges for calibration (user should be looking at center of screen)
+    validation_errors = []
+
+    # Head should be roughly straight (yaw and pitch close to 0)
+    # More lenient thresholds to account for natural variation and camera angles
+    if abs(median_yaw) > 0.25:
+        direction = "left" if median_yaw < 0 else "right"
+        validation_errors.append(f"Head is turned too far {direction} (yaw: {median_yaw:.2f}, should be < 0.25)")
+
+    if abs(median_pitch) > 0.25:
+        direction = "up" if median_pitch < 0 else "down"
+        validation_errors.append(f"Head is tilted too far {direction} (pitch: {median_pitch:.2f}, should be < 0.25)")
+
+    # Gaze should be roughly centered (h_ratio and v_ratio close to 0.5)
+    # Wider range to account for natural eye position variation
+    if median_h < 0.30 or median_h > 0.70:
+        direction = "left" if median_h < 0.5 else "right"
+        validation_errors.append(f"Eyes are looking too far {direction} (h_ratio: {median_h:.2f}, should be 0.30-0.70)")
+
+    if median_v < 0.30 or median_v > 0.70:
+        direction = "up" if median_v < 0.5 else "down"
+        validation_errors.append(f"Eyes are looking too far {direction} (v_ratio: {median_v:.2f}, should be 0.30-0.70)")
+
+    # If validation failed, return error with instructions
+    if validation_errors:
+        return {
+            "success": False,
+            "message": "Calibration failed - please recalibrate while looking straight at the camera.",
+            "validation_errors": validation_errors,
+            "detected_values": {
+                "gaze_h_ratio": median_h,
+                "gaze_v_ratio": median_v,
+                "head_yaw": median_yaw,
+                "head_pitch": median_pitch,
+            },
+            "instructions": [
+                "Look directly at the center of your screen/camera",
+                "Keep your head straight (not tilted or turned)",
+                "Make sure your eyes are looking at the camera, not away",
+                "Then try calibration again"
+            ],
+            "baselines": {
+                "gaze_h_baseline": 0.5,
+                "gaze_v_baseline": 0.5,
+                "head_yaw_baseline": 0.0,
+                "head_pitch_baseline": 0.0,
+                "frames_used": 0,
+            },
+        }
+
+    # Validation passed - return calibrated baselines
     return {
         "success": True,
+        "message": "Calibration successful!",
         "baselines": {
-            "gaze_h_baseline": float(np.median(h_ratios)),
-            "gaze_v_baseline": float(np.median(v_ratios)),
-            "head_yaw_baseline": float(np.median(yaw_values)),
-            "head_pitch_baseline": float(np.median(pitch_values)),
+            "gaze_h_baseline": median_h,
+            "gaze_v_baseline": median_v,
+            "head_yaw_baseline": median_yaw,
+            "head_pitch_baseline": median_pitch,
             "frames_used": len(h_ratios),
+        },
+        "detected_values": {
+            "gaze_h_ratio": median_h,
+            "gaze_v_ratio": median_v,
+            "head_yaw": median_yaw,
+            "head_pitch": median_pitch,
         },
     }
 
@@ -256,6 +345,10 @@ async def calibrate(data: CalibrationData):
 @app.post("/process_frame")
 async def process_frame(data: FrameData):
     frame = _decode_frame(data.image)
+
+    # Flip frame horizontally to match webcam mirror behavior (same as main.py)
+    frame = cv2.flip(frame, 1)
+
     h, w, _ = frame.shape
 
     state = _get_state(_build_session_key(data))
@@ -270,12 +363,20 @@ async def process_frame(data: FrameData):
         )
         state.calibration_applied = True
 
-    # Detect faces and objects
-    frame_with_faces, face_count = face_detector.detect_faces(frame)
-    detected_objects = object_detector.detect(frame)
+    include_processed_image = bool(data.include_processed_image)
+    objects_only_mode = bool(data.objects_only)
+    tracking_only_mode = bool(data.tracking_only) and not objects_only_mode
 
-    # Objects-only mode (for background checks)
-    if data.objects_only:
+    # Fast face count; only draw boxes when a processed image was requested.
+    frame_with_faces, face_count = face_detector.detect_faces(
+        frame,
+        draw=include_processed_image,
+    )
+    detected_objects: List[str] = []
+
+    # Objects-only mode (background object checks at lower frequency).
+    if objects_only_mode:
+        detected_objects = object_detector.detect(frame)
         violation = _violation_type(face_count=-1, detected_objects=detected_objects, score=0)
         should_log = _should_log_violation(state, violation)
         return {
@@ -290,7 +391,13 @@ async def process_frame(data: FrameData):
             "violation_type": violation,
             "should_log_violation": should_log,
             "objects_only": True,
+            "tracking_only": False,
+            "processed_image": None,
         }
+
+    # Skip heavy object detection on the fast tracking path.
+    if not tracking_only_mode:
+        detected_objects = object_detector.detect(frame)
 
     # Run holistic analysis (face mesh + pose + hands in one pass)
     result: HolisticResult = state.holistic.analyze(frame)
@@ -310,7 +417,7 @@ async def process_frame(data: FrameData):
     # Add penalties for multiple faces or prohibited objects
     if face_count > 1:
         score += 5
-    if detected_objects:
+    if detected_objects and not tracking_only_mode:
         score += 10
     score = int(max(0, min(100, score)))
 
@@ -321,23 +428,52 @@ async def process_frame(data: FrameData):
     # Log the event
     exam_logger.log(gaze, head, angle, face_count, score, risk_level, detected_objects)
 
-    # Draw debug info on frame
-    color_gaze = (0, 255, 0) if gaze == "LOOKING CENTER" else (0, 165, 255)
-    color_head = (0, 255, 0) if head == "HEAD STRAIGHT" else (0, 165, 255)
-    color_score = (0, 255, 0) if score < 15 else (0, 165, 255) if score < 40 else (0, 0, 255)
+    # Encode image only when explicitly requested or when logging a violation.
+    should_attach_image = include_processed_image or should_log
+    processed_image = None
 
-    cv2.putText(frame_with_faces, f"Gaze: {gaze}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_gaze, 2)
-    cv2.putText(frame_with_faces, f"Head: {head}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_head, 2)
-    cv2.putText(frame_with_faces, f"Score: {score}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_score, 2)
-    cv2.putText(frame_with_faces, f"Faces: {face_count}", (20, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+    if include_processed_image:
+        # Draw debug info on frame
+        color_gaze = (0, 255, 0) if gaze == "LOOKING CENTER" else (0, 165, 255)
+        color_head = (0, 255, 0) if head == "HEAD STRAIGHT" else (0, 165, 255)
+        color_score = (0, 255, 0) if score < 15 else (0, 165, 255) if score < 40 else (0, 0, 255)
 
-    if detected_objects:
-        cv2.putText(frame_with_faces, f"Objects: {', '.join(detected_objects)}", (20, h - 60),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        cv2.putText(frame_with_faces, f"Gaze: {gaze}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_gaze, 2)
+        cv2.putText(frame_with_faces, f"Head: {head}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_head, 2)
+        cv2.putText(frame_with_faces, f"Score: {score}", (20, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color_score, 2)
+        cv2.putText(frame_with_faces, f"Faces: {face_count}", (20, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
 
-    # Encode processed frame
-    _, buffer = cv2.imencode(".jpg", frame_with_faces)
-    processed_image_b64 = base64.b64encode(buffer).decode("utf-8")
+        # Debug overlay - show raw gaze/head values on right side with black background for visibility
+        if result.face_detected:
+            # Draw semi-transparent black background for text (larger for thresholds)
+            overlay = frame_with_faces.copy()
+            cv2.rectangle(overlay, (w - 200, 15), (w - 5, 280), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.6, frame_with_faces, 0.4, 0, frame_with_faces)
+
+            # Current values (cyan)
+            cv2.putText(frame_with_faces, "=== VALUES ===", (w - 190, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
+            cv2.putText(frame_with_faces, f"H: {result.gaze_h_ratio:.3f}", (w - 190, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+            cv2.putText(frame_with_faces, f"V: {result.gaze_v_ratio:.3f}", (w - 190, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 255), 2)
+            cv2.putText(frame_with_faces, f"Yaw: {result.head_yaw:.3f}", (w - 190, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 0), 2)
+            cv2.putText(frame_with_faces, f"Pitch: {result.head_pitch:.3f}", (w - 190, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 0), 2)
+
+            # Thresholds (green)
+            cv2.putText(frame_with_faces, "=== THRESHOLDS ===", (w - 190, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 1)
+            cv2.putText(frame_with_faces, "GAZE:", (w - 190, 195), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+            cv2.putText(frame_with_faces, "LEFT < 0.45", (w - 185, 215), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 200, 255), 1)
+            cv2.putText(frame_with_faces, "RIGHT > 0.55", (w - 185, 233), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 200, 255), 1)
+
+            cv2.putText(frame_with_faces, "HEAD:", (w - 190, 255), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1)
+            cv2.putText(frame_with_faces, "UP < 0.02 | DOWN > 0.23", (w - 185, 273), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (150, 255, 200), 1)
+
+        if detected_objects:
+            cv2.putText(frame_with_faces, f"Objects: {', '.join(detected_objects)}", (20, h - 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+
+    if should_attach_image:
+        _, buffer = cv2.imencode(".jpg", frame_with_faces)
+        processed_image_b64 = base64.b64encode(buffer).decode("utf-8")
+        processed_image = f"data:image/jpeg;base64,{processed_image_b64}"
 
     return {
         "success": True,
@@ -358,7 +494,9 @@ async def process_frame(data: FrameData):
         "head_pitch": float(result.head_pitch),
         "body_alerts": result.body_alerts,
         "hand_alerts": result.hand_alerts,
-        "processed_image": f"data:image/jpeg;base64,{processed_image_b64}",
+        "objects_only": False,
+        "tracking_only": tracking_only_mode,
+        "processed_image": processed_image,
     }
 
 

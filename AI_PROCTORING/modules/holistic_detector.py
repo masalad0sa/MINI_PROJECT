@@ -107,7 +107,7 @@ class HolisticDetector:
         self.last_head_direction: str = "HEAD STRAIGHT"
 
         # Vertical gaze gain
-        self.vertical_gain: float = 1.4
+        self.vertical_gain: float = 0.9  # Conservative gain to reduce false LOOKING UP/DOWN
         self.min_eye_height_px: float = 5.0
 
     def close(self):
@@ -184,8 +184,8 @@ class HolisticDetector:
             result.head_pitch = pitch
             result.head_roll = roll
 
-            # Eye gaze from iris landmarks
-            gaze_dir, h_ratio, v_ratio = self._compute_gaze(landmarks, w, h, pitch)
+            # Eye gaze from iris landmarks (pass yaw and pitch for baseline drift protection)
+            gaze_dir, h_ratio, v_ratio = self._compute_gaze(landmarks, w, h, pitch, yaw)
             result.gaze_direction = gaze_dir
             result.gaze_h_ratio = h_ratio
             result.gaze_v_ratio = v_ratio
@@ -282,32 +282,30 @@ class HolisticDetector:
     def _head_direction_hysteresis(self, yaw: float, pitch: float, roll: float) -> str:
         d = self.last_head_direction
 
-        # Hysteresis: once in a non-center state, require the value to
-        # move back past the *exit* threshold (closer to zero) before
-        # we re-evaluate.  If still beyond exit, keep current label.
-        if d == "HEAD TURN LEFT" and yaw < -0.12:  # exit at -0.12 (enter at -0.18)
+        # Hysteresis: exit thresholds (closer to zero = more lenient, harder to exit)
+        if d == "HEAD TURN LEFT" and yaw < -0.08:
             return d
-        if d == "HEAD TURN RIGHT" and yaw > 0.12:
+        if d == "HEAD TURN RIGHT" and yaw > 0.08:
             return d
-        # Fixed: HEAD UP/DOWN thresholds now symmetrical around zero
-        if d == "HEAD UP" and pitch < -0.06:  # exit at -0.06 (enter at -0.12)
+        if d == "HEAD UP" and pitch < -0.09:  # More lenient exit for HEAD UP
             return d
-        if d == "HEAD DOWN" and pitch > 0.12:  # exit at 0.12 (enter at 0.18)
+        if d == "HEAD DOWN" and pitch > 0.05:  # More lenient exit for HEAD DOWN
             return d
-        if d == "HEAD TILT RIGHT" and roll > 12:
+        if d == "HEAD TILT RIGHT" and roll > 10:
             return d
-        if d == "HEAD TILT LEFT" and roll < -12:
+        if d == "HEAD TILT LEFT" and roll < -10:
             return d
 
-        # Value has passed exit threshold (or we were already CENTER);
-        # now apply the stricter entry thresholds.
-        if yaw < -0.18:
+        # Entry thresholds
+        # HEAD UP: easier to detect (less negative threshold)
+        # HEAD DOWN: harder to detect (more positive threshold)
+        if yaw < -0.08:
             self.last_head_direction = "HEAD TURN LEFT"
-        elif yaw > 0.18:
+        elif yaw > 0.08:
             self.last_head_direction = "HEAD TURN RIGHT"
-        elif pitch < -0.12:  # Fixed: symmetrical with DOWN
+        elif pitch < -0.05:  # Made easier: was 0.02, now 0.10 (less negative = easier to trigger)
             self.last_head_direction = "HEAD UP"
-        elif pitch > 0.18:  # Fixed: symmetrical with UP
+        elif pitch > 0.05:  # Made harder: was 0.23, now 0.30 (more positive = harder to trigger)
             self.last_head_direction = "HEAD DOWN"
         elif roll > 18:
             self.last_head_direction = "HEAD TILT RIGHT"
@@ -321,7 +319,7 @@ class HolisticDetector:
     # --- Gaze ---
 
     def _compute_gaze(
-        self, landmarks, img_w: int, img_h: int, head_pitch: float,
+        self, landmarks, img_w: int, img_h: int, head_pitch: float, head_yaw: float,
     ) -> Tuple[str, float, float]:
         """Compute gaze direction from iris landmarks."""
         try:
@@ -347,7 +345,10 @@ class HolisticDetector:
         if self.baseline_h_ratio is None:
             self.baseline_h_ratio = self.smoothed_h_ratio
         elif abs(self.smoothed_h_ratio - self.baseline_h_ratio) < 0.08:
-            self.baseline_h_ratio = 0.97 * self.baseline_h_ratio + 0.03 * self.smoothed_h_ratio
+            # Only update baseline when head is roughly straight to prevent drift
+            head_is_straight = abs(head_yaw) < 0.10 and abs(head_pitch) < 0.10
+            if head_is_straight:
+                self.baseline_h_ratio = 0.97 * self.baseline_h_ratio + 0.03 * self.smoothed_h_ratio
 
         norm_h = float(np.clip(self.smoothed_h_ratio - self.baseline_h_ratio + 0.5, 0.0, 1.0))
 
@@ -362,7 +363,10 @@ class HolisticDetector:
         if self.baseline_v_ratio is None:
             self.baseline_v_ratio = self.smoothed_v_ratio
         elif abs(self.smoothed_v_ratio - self.baseline_v_ratio) < 0.06:
-            self.baseline_v_ratio = 0.98 * self.baseline_v_ratio + 0.02 * self.smoothed_v_ratio
+            # Only update baseline when head is roughly straight to prevent drift
+            head_is_straight = abs(head_yaw) < 0.10 and abs(head_pitch) < 0.10
+            if head_is_straight:
+                self.baseline_v_ratio = 0.98 * self.baseline_v_ratio + 0.02 * self.smoothed_v_ratio
 
         norm_v = float(
             np.clip(
@@ -383,20 +387,22 @@ class HolisticDetector:
 
     def _gaze_direction_hysteresis(self, norm_h: float, norm_v: float, head_pitch) -> str:
         # Thresholds: enter = further from center, exit = closer to center.
-        # Once looking LEFT, stay until norm_h climbs back above h_exit_left.
-        # Widened thresholds to reduce false positives from natural eye movement.
-        h_enter_left  = 0.32   # must drop below this to enter LOOKING LEFT
-        h_exit_left   = 0.40   # must rise above this to leave LOOKING LEFT
-        h_enter_right = 0.68   # must rise above this to enter LOOKING RIGHT
-        h_exit_right  = 0.60   # must drop below this to leave LOOKING RIGHT
-        # Vertical thresholds widened significantly - eyes naturally move more
-        # during reading and normal activity than horizontal movement.
-        v_enter_up    = 0.30   # must drop below this to enter LOOKING UP
-        v_exit_up     = 0.38   # must rise above this to leave LOOKING UP
-        v_enter_down  = 0.70   # must rise above this to enter LOOKING DOWN
-        v_exit_down   = 0.62   # must drop below this to leave LOOKING DOWN
+        # Horizontal: more sensitive for better left/right detection
+        h_enter_left  = 0.45   # must drop below this to enter LOOKING LEFT
+        h_exit_left   = 0.49   # must rise above this to leave LOOKING LEFT (more lenient)
+        h_enter_right = 0.55   # must rise above this to enter LOOKING RIGHT
+        h_exit_right  = 0.51   # must drop below this to leave LOOKING RIGHT (more lenient)
+        # Vertical thresholds (with hysteresis), intentionally conservative
+        # to avoid persistent false "LOOKING UP" labels in webcam setups.
+        v_enter_up    = 0.34   # must drop below this to enter LOOKING UP
+        v_exit_up     = 0.42   # must rise above this to leave LOOKING UP
+        v_enter_down  = 0.66   # must rise above this to enter LOOKING DOWN
+        v_exit_down   = 0.58   # must drop below this to leave LOOKING DOWN
 
         d = self.last_gaze_direction
+        pitch_block_vertical = (
+            head_pitch is not None and abs(float(head_pitch)) >= 0.14
+        )
 
         # Hysteresis: stay in current direction only while value is STILL
         # beyond the exit threshold (i.e. hasn't returned toward center).
@@ -404,21 +410,19 @@ class HolisticDetector:
             return d
         if d == "LOOKING RIGHT" and norm_h > h_exit_right:
             return d
-        if d == "LOOKING UP" and norm_v < v_exit_up:
+        if d == "LOOKING UP" and (not pitch_block_vertical) and norm_v < v_exit_up:
             return d
-        if d == "LOOKING DOWN" and norm_v > v_exit_down:
+        if d == "LOOKING DOWN" and (not pitch_block_vertical) and norm_v > v_exit_down:
             return d
 
-        # Value has crossed back past exit threshold → re-evaluate
-        pitch_block = head_pitch is not None and abs(float(head_pitch)) >= 0.18
-
+        # Entry checks
         if norm_h < h_enter_left:
             self.last_gaze_direction = "LOOKING LEFT"
         elif norm_h > h_enter_right:
             self.last_gaze_direction = "LOOKING RIGHT"
-        elif not pitch_block and norm_v < v_enter_up:
+        elif (not pitch_block_vertical) and norm_v < v_enter_up:
             self.last_gaze_direction = "LOOKING UP"
-        elif not pitch_block and norm_v > v_enter_down:
+        elif (not pitch_block_vertical) and norm_v > v_enter_down:
             self.last_gaze_direction = "LOOKING DOWN"
         else:
             self.last_gaze_direction = "LOOKING CENTER"

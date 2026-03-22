@@ -18,6 +18,34 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const isOptionsRequest = (req) => req.method === "OPTIONS";
+const isProctoringFrameRequest = (req) =>
+  /^\/api\/proctoring\/[^/]+\/frame\/?$/.test(req.path);
+
+const defaultAllowedOrigins = [
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+  "http://localhost:4173",
+  "http://127.0.0.1:4173",
+];
+const envAllowedOrigins = (
+  process.env.FRONTEND_URLS || process.env.FRONTEND_URL || ""
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...envAllowedOrigins])];
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  credentials: true,
+  optionsSuccessStatus: 204,
+};
 
 // MongoDB Connection
 mongoose
@@ -26,6 +54,10 @@ mongoose
   )
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.log("MongoDB connection error:", err));
+
+// CORS should run before limiters so preflight always gets CORS headers.
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 
 // Security middleware
 app.use(helmet());
@@ -37,7 +69,11 @@ const globalLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many requests, please try again later." },
-  skip: () => process.env.NODE_ENV === "test",
+  // Proctoring frame uploads are high-frequency by design; route-level limiter handles them.
+  skip: (req) =>
+    process.env.NODE_ENV === "test" ||
+    isOptionsRequest(req) ||
+    isProctoringFrameRequest(req),
 });
 app.use(globalLimiter);
 
@@ -47,16 +83,8 @@ const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { message: "Too many login attempts, please try again after a minute." },
-  skip: () => process.env.NODE_ENV === "test",
+  skip: (req) => process.env.NODE_ENV === "test" || isOptionsRequest(req),
 });
-
-// Middleware
-app.use(
-  cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
-    credentials: true,
-  }),
-);
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());

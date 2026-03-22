@@ -302,6 +302,7 @@ export function ActiveExam() {
   const proctoringState = useProctoring(videoRef, handleAIViolation, {
     examId,
     sessionId,
+    trackingIntervalMs: 120,
     objectDetectionIntervalMs: 2000,
     violationCooldownMs: 8000,
   });
@@ -549,6 +550,13 @@ export function ActiveExam() {
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
     return `${String(hours).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  };
+
+  const formatOverlayMetric = (value: number | null | undefined) => {
+    if (typeof value !== "number" || Number.isNaN(value)) {
+      return "--";
+    }
+    return value.toFixed(3);
   };
 
   const handleAnswerChange = (optionIndex: number) => {
@@ -1028,6 +1036,26 @@ export function ActiveExam() {
                   >
                     {proctoringState.facesDetected}
                   </span>
+                </div>
+                <div className="mt-1.5 pt-1.5 border-t border-white/10 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Pitch:</span>
+                    <span className="font-bold text-cyan-300">
+                      {formatOverlayMetric(proctoringState.headPitch)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Yaw:</span>
+                    <span className="font-bold text-cyan-300">
+                      {formatOverlayMetric(proctoringState.headYaw)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Gaze Vertical:</span>
+                    <span className="font-bold text-cyan-300">
+                      {formatOverlayMetric(proctoringState.gazeVerticalValue)}
+                    </span>
+                  </div>
                 </div>
                 <div className="mt-1.5 pt-1.5 border-t border-white/10">
                   <div className="flex justify-between mb-1">

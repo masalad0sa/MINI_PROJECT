@@ -29,10 +29,34 @@ def get_risk_level(score):
 
 
 def main():
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Could not open webcam")
+    import sys
+    print("Attempting to open webcam...", flush=True)
+
+    # Try different camera indices
+    cap = None
+    for cam_idx in [0, 1, 2]:
+        print(f"  Trying camera index {cam_idx}...", flush=True)
+        test_cap = cv2.VideoCapture(cam_idx, cv2.CAP_DSHOW)  # Use DirectShow on Windows
+        if test_cap.isOpened():
+            ret, frame = test_cap.read()
+            if ret and frame is not None:
+                print(f"  Camera {cam_idx} works! Frame shape: {frame.shape}", flush=True)
+                cap = test_cap
+                break
+            else:
+                print(f"  Camera {cam_idx} opened but can't read frames", flush=True)
+                test_cap.release()
+        else:
+            print(f"  Camera {cam_idx} failed to open", flush=True)
+
+    if cap is None:
+        print("Error: Could not open any webcam. Make sure:", flush=True)
+        print("  1. Your webcam is connected", flush=True)
+        print("  2. No other app is using the camera", flush=True)
+        print("  3. Camera permissions are granted", flush=True)
         return
+
+    print("Webcam opened successfully!", flush=True)
 
     face_detector = FaceDetector()
     holistic = HolisticDetector(static_image_mode=False)
@@ -78,6 +102,12 @@ def main():
         # Run holistic analysis
         holistic_result = holistic.analyze(frame)
 
+        # Debug: show raw values
+        h_ratio = 0.5
+        v_ratio = 0.5
+        yaw = 0.0
+        pitch = 0.0
+
         if holistic_result and holistic_result.face_detected:
             gaze = holistic_result.gaze_direction
             head = holistic_result.head_direction
@@ -85,6 +115,12 @@ def main():
             body_alerts = holistic_result.body_alerts
             hand_alerts = holistic_result.hand_alerts
             effective_face_count = max(detector_face_count, holistic_result.face_count)
+
+            # Capture raw values for debug display
+            h_ratio = holistic_result.gaze_h_ratio
+            v_ratio = holistic_result.gaze_v_ratio
+            yaw = holistic_result.head_yaw
+            pitch = holistic_result.head_pitch
 
             score = behavior_analyzer.analyze(gaze, head)
 
@@ -164,6 +200,17 @@ def main():
             alert_y += 25
 
         cv2.putText(frame, f"FPS: {fps}", (20, h - 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+
+        # Debug: show raw gaze/head values on right side
+        cv2.putText(frame, f"H: {h_ratio:.2f}", (w - 120, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"V: {v_ratio:.2f}", (w - 120, 65), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"Yaw: {yaw:.2f}", (w - 120, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(frame, f"Pitch: {pitch:.2f}", (w - 120, 115), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+        # Show gaze thresholds
+        cv2.putText(frame, "Gaze Thresholds:", (w - 280, h - 120), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 255, 100), 1)
+        cv2.putText(frame, f"H: <0.45 LEFT | >0.55 RIGHT", (w - 280, h - 95), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+        cv2.putText(frame, f"V: <0.47 UP | >0.53 DOWN", (w - 280, h - 70), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
 
         if violation_type:
             cv2.putText(frame, violation_type, (20, h - 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)

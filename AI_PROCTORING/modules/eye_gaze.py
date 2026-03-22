@@ -6,7 +6,7 @@ class EyeGazeTracker:
         self.smooth_alpha = float(np.clip(smooth_alpha, 0.05, 0.95))
         # Vertical gaze tends to have a smaller dynamic range than horizontal.
         # Apply a modest gain after baseline normalization for better UP/DOWN sensitivity.
-        self.vertical_gain = 1.4
+        self.vertical_gain = 0.9  # Conservative gain to reduce false LOOKING UP/DOWN
         self.min_eye_height_px = 5.0
         self.smoothed_h_ratio = None
         self.smoothed_v_ratio = None
@@ -29,7 +29,7 @@ class EyeGazeTracker:
         self.last_raw_v_ratio = 0.5
         self.last_normalized_v_ratio = 0.5
 
-    def get_gaze_direction(self, landmarks, img_w, img_h, head_pitch=None):
+    def get_gaze_direction(self, landmarks, img_w, img_h, head_pitch=None, head_yaw=None):
         try:
             left_h_ratio, left_width = self._eye_h_ratio(
                 landmarks,
@@ -84,7 +84,13 @@ class EyeGazeTracker:
         if self.baseline_h_ratio is None:
             self.baseline_h_ratio = self.smoothed_h_ratio
         elif abs(self.smoothed_h_ratio - self.baseline_h_ratio) < 0.08:
-            self.baseline_h_ratio = (0.97 * self.baseline_h_ratio) + (0.03 * self.smoothed_h_ratio)
+            # Only update baseline when head is roughly straight to prevent drift
+            head_is_straight = (
+                (head_yaw is None or abs(head_yaw) < 0.10) and
+                (head_pitch is None or abs(head_pitch) < 0.10)
+            )
+            if head_is_straight:
+                self.baseline_h_ratio = (0.97 * self.baseline_h_ratio) + (0.03 * self.smoothed_h_ratio)
 
         norm_h = float(
             np.clip(self.smoothed_h_ratio - self.baseline_h_ratio + 0.5, 0.0, 1.0)
@@ -113,7 +119,13 @@ class EyeGazeTracker:
         if self.baseline_v_ratio is None:
             self.baseline_v_ratio = self.smoothed_v_ratio
         elif abs(self.smoothed_v_ratio - self.baseline_v_ratio) < 0.06:
-            self.baseline_v_ratio = (0.98 * self.baseline_v_ratio) + (0.02 * self.smoothed_v_ratio)
+            # Only update baseline when head is roughly straight to prevent drift
+            head_is_straight = (
+                (head_yaw is None or abs(head_yaw) < 0.10) and
+                (head_pitch is None or abs(head_pitch) < 0.10)
+            )
+            if head_is_straight:
+                self.baseline_v_ratio = (0.98 * self.baseline_v_ratio) + (0.02 * self.smoothed_v_ratio)
 
         norm_v = float(
             np.clip(
@@ -134,18 +146,18 @@ class EyeGazeTracker:
         self.last_normalized_v_ratio = norm_v
 
         # --- Direction decision with hysteresis ---
-        # Horizontal thresholds (widened for better sensitivity)
-        h_enter_left = 0.32
-        h_exit_left = 0.40
-        h_enter_right = 0.68
-        h_exit_right = 0.60
-
-        # Vertical thresholds - widened to reduce false positives from natural
-        # eye movement during reading and normal activity
-        v_enter_up = 0.30
-        v_exit_up = 0.38
-        v_enter_down = 0.70
-        v_exit_down = 0.62
+        # Horizontal thresholds (more sensitive for left/right)
+        h_enter_left = 0.45
+        h_exit_left = 0.49   # More lenient - harder to exit LEFT
+        h_enter_right = 0.55
+        h_exit_right = 0.51  # More lenient - harder to exit RIGHT
+        v_enter_up = 0.34
+        v_exit_up = 0.42
+        v_enter_down = 0.66
+        v_exit_down = 0.58
+        pitch_block_vertical = (
+            head_pitch is not None and abs(float(head_pitch)) >= 0.14
+        )
 
         # Hysteresis: stay in current direction until clearly returning to center
         if self.last_direction == "LOOKING LEFT":
@@ -159,12 +171,12 @@ class EyeGazeTracker:
             else:
                 return "LOOKING RIGHT"
         elif self.last_direction == "LOOKING UP":
-            if norm_v > v_exit_up:
+            if pitch_block_vertical or norm_v > v_exit_up:
                 self.last_direction = "LOOKING CENTER"
             else:
                 return "LOOKING UP"
         elif self.last_direction == "LOOKING DOWN":
-            if norm_v < v_exit_down:
+            if pitch_block_vertical or norm_v < v_exit_down:
                 self.last_direction = "LOOKING CENTER"
             else:
                 return "LOOKING DOWN"
@@ -176,11 +188,6 @@ class EyeGazeTracker:
         if norm_h > h_enter_right:
             self.last_direction = "LOOKING RIGHT"
             return "LOOKING RIGHT"
-        # Suppress vertical labels when head pitch is large; rely on head pose
-        # labels in that case instead of misclassifying as gaze UP/DOWN.
-        pitch_block_vertical = (
-            head_pitch is not None and abs(float(head_pitch)) >= 0.18
-        )
         if (not pitch_block_vertical) and norm_v < v_enter_up:
             self.last_direction = "LOOKING UP"
             return "LOOKING UP"
@@ -219,4 +226,3 @@ class EyeGazeTracker:
         ratio = (y_iris - y_upper) / height
 
         return float(np.clip(ratio, 0.0, 1.0)), float(height)
-

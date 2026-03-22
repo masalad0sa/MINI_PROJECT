@@ -13,7 +13,7 @@ class ObjectDetector:
     if internet is available).
     """
 
-    def __init__(self, default_conf_threshold=0.25):
+    def __init__(self, default_conf_threshold=0.55):
         # Try yolov8s first (better accuracy for partial objects), then yolov8n
         base_dir = Path(__file__).resolve().parent.parent
         model_candidates = [
@@ -53,8 +53,7 @@ class ObjectDetector:
             "phone": "cell phone",
             "notebook": "book",
             "ipad": "tablet",
-            "tv": "tablet",       # YOLOv8 sometimes mistakes tablets for TV
-            "monitor": "laptop",  # External monitor
+            # Removed: "tv" and "monitor" cause too many false positives
         }
 
     def _normalize_label(self, label):

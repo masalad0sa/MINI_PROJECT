@@ -189,6 +189,9 @@ export const processFrame = async (req, res) => {
   try {
     const { id: examId } = req.params;
     const { image, sessionId, calibration } = req.body;
+    const objectsOnly = Boolean(req.body.objectsOnly);
+    const trackingOnly = Boolean(req.body.trackingOnly);
+    const includeProcessedImage = Boolean(req.body.includeProcessedImage);
     const resolvedSessionId =
       sessionId || `${examId || "unknown"}:${req.ip || "local"}`;
 
@@ -205,19 +208,22 @@ export const processFrame = async (req, res) => {
 
     // Forward to Python Service
     try {
+      const isRealtimeTracking = trackingOnly && !objectsOnly;
       const response = await postToPythonWithRetry(
         "/process_frame",
         {
           image,
           session_id: resolvedSessionId,
           exam_id: examId || null,
-          objects_only: Boolean(req.body.objectsOnly),
+          objects_only: objectsOnly,
+          tracking_only: trackingOnly,
+          include_processed_image: includeProcessedImage,
           calibration: calibration || null,
         },
         {
-          timeout: 12000,
-          maxAttempts: 3,
-          initialDelayMs: 500,
+          timeout: isRealtimeTracking ? 3500 : 12000,
+          maxAttempts: isRealtimeTracking ? 1 : 3,
+          initialDelayMs: isRealtimeTracking ? 0 : 500,
         },
       );
 
