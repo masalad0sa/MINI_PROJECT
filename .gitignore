@@ -14,6 +14,9 @@ AI_PROCTORING/venv/
 dist/
 build/
 coverage/
+frontend/dist/
+backend/dist/
+frontend/.vite/
 
 # Logs
 *.log
@@ -27,6 +30,8 @@ __pycache__/
 *.pyo
 .pytest_cache/
 .mypy_cache/
+AI_PROCTORING/**/__pycache__/
+AI_PROCTORING/**/*.pyc
 
 # Project Data / Generated Files
 AI_PROCTORING/evidence/
