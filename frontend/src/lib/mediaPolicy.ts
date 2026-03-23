@@ -1,22 +1,26 @@
-const BLOCKED_CAMERA_LABEL_HINTS = [
-  "usb",
-  "external",
+const HARD_BLOCK_CAMERA_LABEL_HINTS = [
   "virtual",
   "obs",
   "droidcam",
   "epoccam",
   "iriun",
   "ivcam",
-  "cam link",
-  "capture",
   "ndi",
   "snap camera",
-  "logitech",
-  "elgato",
-  "razer",
-  "avermedia",
   "phone",
   "continuity camera",
+];
+
+const BUILT_IN_CAMERA_LABEL_HINTS = [
+  "integrated",
+  "built-in",
+  "builtin",
+  "internal",
+  "facetime",
+  "front camera",
+  "laptop",
+  "notebook",
+  "rgb camera",
 ];
 
 function stopMediaStream(stream: MediaStream | null | undefined) {
@@ -24,10 +28,29 @@ function stopMediaStream(stream: MediaStream | null | undefined) {
   stream.getTracks().forEach((track) => track.stop());
 }
 
-function isBlockedCameraLabel(label: string): boolean {
-  const normalized = label.trim().toLowerCase();
+function normalizeLabel(label: string): string {
+  return String(label || "").trim().toLowerCase();
+}
+
+function isLikelyBuiltInCameraLabel(label: string): boolean {
+  const normalized = normalizeLabel(label);
   if (!normalized) return false;
-  return BLOCKED_CAMERA_LABEL_HINTS.some((hint) => normalized.includes(hint));
+  return BUILT_IN_CAMERA_LABEL_HINTS.some((hint) => normalized.includes(hint));
+}
+
+function isHardBlockedCameraLabel(label: string): boolean {
+  const normalized = normalizeLabel(label);
+  if (!normalized) return false;
+  return HARD_BLOCK_CAMERA_LABEL_HINTS.some((hint) =>
+    normalized.includes(hint),
+  );
+}
+
+function isBlockedCameraLabel(label: string): boolean {
+  const normalized = normalizeLabel(label);
+  if (!normalized) return false;
+  if (isLikelyBuiltInCameraLabel(normalized)) return false;
+  return isHardBlockedCameraLabel(normalized);
 }
 
 async function getVideoInputDevices(): Promise<MediaDeviceInfo[]> {
@@ -37,8 +60,29 @@ async function getVideoInputDevices(): Promise<MediaDeviceInfo[]> {
 
 function createExternalCameraError(): Error {
   return new Error(
-    "External and virtual cameras are blocked. Please use your built-in webcam.",
+    "Selected camera is blocked by policy. Please use your built-in webcam.",
   );
+}
+
+function pickBestAllowedDevice(
+  devices: MediaDeviceInfo[],
+  excludedDeviceId?: string,
+): MediaDeviceInfo | null {
+  const allowed = devices.filter(
+    (device) =>
+      device.deviceId !== excludedDeviceId &&
+      !isBlockedCameraLabel(device.label),
+  );
+  if (allowed.length === 0) return null;
+
+  const ranked = [...allowed].sort((a, b) => {
+    const aBuiltIn = isLikelyBuiltInCameraLabel(a.label);
+    const bBuiltIn = isLikelyBuiltInCameraLabel(b.label);
+    if (aBuiltIn && !bBuiltIn) return -1;
+    if (!aBuiltIn && bBuiltIn) return 1;
+    return 0;
+  });
+  return ranked[0] || null;
 }
 
 /**
@@ -81,13 +125,14 @@ export async function getBuiltInCameraStream(
       return defaultStream;
     }
 
-    const builtInDevice = devices.find(
-      (device) =>
-        device.deviceId !== selectedDeviceId &&
-        !isBlockedCameraLabel(device.label),
-    );
+    const builtInDevice = pickBestAllowedDevice(devices, selectedDeviceId);
 
     if (!builtInDevice) {
+      // Fail-open for ambiguous physical-camera labels so integrated webcams
+      // with vendor-specific names are not incorrectly rejected.
+      if (!isHardBlockedCameraLabel(selectedLabel)) {
+        return defaultStream;
+      }
       throw createExternalCameraError();
     }
 
@@ -107,6 +152,10 @@ export async function getBuiltInCameraStream(
     ).trim();
 
     if (isBlockedCameraLabel(replacementLabel)) {
+      if (!isHardBlockedCameraLabel(replacementLabel)) {
+        stopMediaStream(defaultStream);
+        return replacementStream;
+      }
       stopMediaStream(replacementStream);
       throw createExternalCameraError();
     }
