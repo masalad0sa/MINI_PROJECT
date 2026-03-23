@@ -6,53 +6,51 @@ import React, {
   ReactNode,
 } from "react";
 import * as api from "../lib/api";
+import {
+  getStoredAuthUser,
+  setStoredAuthUser,
+  getAuthToken,
+  clearStoredAuthUser,
+} from "./authStorage";
 
 export interface User {
   id: string;
   userId: string;
   email: string;
   name: string;
-  role: "student" | "examiner" | "admin" | "moderator";
+  role: "student" | "examiner" | "admin";
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   error: string | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (
+    email: string,
+    password: string,
+    expectedRole?: User["role"],
+    rememberMe?: boolean,
+  ) => Promise<void>;
   logout: () => void;
   register: (
     email: string,
     password: string,
     name: string,
+    userId: string,
     role?: string,
   ) => Promise<void>;
 }
 
-const STORAGE_KEY = "smartproctor_user";
-const TOKEN_KEY = "token";
-
-// Restore user from localStorage
+// Restore user from tab-scoped storage
 const getStoredUser = (): User | null => {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    const token = localStorage.getItem(TOKEN_KEY);
-    if (stored && token) {
-      return JSON.parse(stored);
-    }
-  } catch {
-    // Invalid stored data
-  }
-  return null;
+  const token = getAuthToken();
+  if (!token) return null;
+  return getStoredAuthUser<User>();
 };
 
-// Save user to localStorage
+// Save user to tab-scoped storage
 const storeUser = (user: User | null) => {
-  if (user) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-  } else {
-    localStorage.removeItem(STORAGE_KEY);
-  }
+  setStoredAuthUser(user);
 };
 
 export const AuthContext = createContext<AuthContextType | undefined>(
@@ -60,19 +58,19 @@ export const AuthContext = createContext<AuthContextType | undefined>(
 );
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  // Initialize user from localStorage for session persistence
+  // Initialize user from storage for current tab session persistence
   const [user, setUser] = useState<User | null>(() => getStoredUser());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Sync user state with localStorage
+  // Sync user state with storage
   useEffect(() => {
     storeUser(user);
   }, [user]);
 
   // Reconcile cached user with backend source of truth (role may have changed).
   useEffect(() => {
-    const token = localStorage.getItem(TOKEN_KEY);
+    const token = getAuthToken();
     if (!token) return;
 
     let cancelled = false;
@@ -87,14 +85,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(res.user);
         } else {
           api.clearToken();
-          localStorage.removeItem(STORAGE_KEY);
+          clearStoredAuthUser();
           setUser(null);
         }
       })
       .catch(() => {
         if (cancelled) return;
         api.clearToken();
-        localStorage.removeItem(STORAGE_KEY);
+        clearStoredAuthUser();
         setUser(null);
       })
       .finally(() => {
@@ -106,23 +104,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await api.login(email, password);
-      if (res?.success && res?.token) {
-        api.setToken(res.token);
-        setUser(res.user);
-      } else {
-        setError(res?.message || "Login failed");
+  const login = useCallback(
+    async (
+      email: string,
+      password: string,
+      expectedRole?: User["role"],
+      rememberMe = false,
+    ) => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const res = await api.login(email, password, rememberMe);
+        if (res?.success && res?.token && res?.user) {
+          const actualRole = res.user.role as User["role"];
+          if (expectedRole && actualRole !== expectedRole) {
+            const roleLabel = expectedRole.charAt(0).toUpperCase() + expectedRole.slice(1);
+            const message = `${roleLabel} login only allows ${expectedRole} accounts.`;
+            setError(message);
+            throw new Error(message);
+          }
+
+          api.setToken(res.token, { remember: rememberMe });
+          setUser(res.user);
+          return;
+        }
+
+        const message = res?.message || "Login failed";
+        setError(message);
+        throw new Error(message);
+      } catch (err: any) {
+        const message = err?.message || "Login error";
+        setError(message);
+        throw err instanceof Error ? err : new Error(message);
+      } finally {
+        setIsLoading(false);
       }
-    } catch (err: any) {
-      setError(err.message || "Login error");
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   const logout = useCallback(async () => {
     try {
@@ -137,11 +156,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const register = useCallback(
-    async (email: string, password: string, name: string, role = "student") => {
+    async (email: string, password: string, name: string, userId: string, role = "student") => {
       setIsLoading(true);
       setError(null);
       try {
-        const res = await api.register(email, password, name, role);
+        const res = await api.register(email, password, name, userId, role);
         if (res?.success && res?.token) {
           api.setToken(res.token);
           setUser(res.user);
@@ -171,4 +190,3 @@ export function useAuth() {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
-

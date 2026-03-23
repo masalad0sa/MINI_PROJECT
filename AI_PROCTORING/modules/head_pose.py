@@ -87,26 +87,26 @@ class HeadPoseEstimator:
             "roll": float(roll),
         }
 
-        # Hysteresis for stable direction labels.
-        if self.last_direction == "HEAD TURN LEFT" and yaw < -0.12:
+        # Hysteresis for stable direction labels - less sensitive to reduce jitter
+        if self.last_direction == "HEAD TURN LEFT" and yaw < -0.08:
             return "HEAD TURN LEFT", roll
-        if self.last_direction == "HEAD TURN RIGHT" and yaw > 0.12:
+        if self.last_direction == "HEAD TURN RIGHT" and yaw > 0.08:
             return "HEAD TURN RIGHT", roll
-        if self.last_direction == "HEAD UP" and pitch < 0.06:
+        if self.last_direction == "HEAD UP" and pitch < 0.08:  # More lenient exit
             return "HEAD UP", roll
-        if self.last_direction == "HEAD DOWN" and pitch > 0.24:
+        if self.last_direction == "HEAD DOWN" and pitch > 0.22:  # More lenient exit
             return "HEAD DOWN", roll
 
-        if yaw < -0.18:
+        if yaw < -0.15:
             self.last_direction = "HEAD TURN LEFT"
             return "HEAD TURN LEFT", roll
-        if yaw > 0.18:
+        if yaw > 0.15:
             self.last_direction = "HEAD TURN RIGHT"
             return "HEAD TURN RIGHT", roll
-        if pitch < 0.03:
+        if pitch < 0.10:  # Easier to detect HEAD UP: was -0.8 (likely typo), now 0.10
             self.last_direction = "HEAD UP"
             return "HEAD UP", roll
-        if pitch > 0.28:
+        if pitch > 0.30:  # Harder to detect HEAD DOWN: was 0.12, now 0.30
             self.last_direction = "HEAD DOWN"
             return "HEAD DOWN", roll
         if roll > 18:

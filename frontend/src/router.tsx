@@ -8,6 +8,8 @@ import {
 } from "react-router-dom";
 import { useAuth } from "./lib/AuthContext";
 import { LoginScreen } from "./app/components/LoginScreen";
+import { AdminLoginScreen } from "./app/components/AdminLoginScreen";
+import { SignUpScreen } from "./app/components/SignUpScreen";
 import { StudentDashboard } from "./app/components/StudentDashboard";
 import { PreExamCheck } from "./app/components/PreExamCheck";
 import { SystemCheck } from "./app/components/SystemCheck";
@@ -20,6 +22,7 @@ import { IntegrityReport } from "./app/components/IntegrityReport";
 import { UserManagement } from "./app/components/UserManagement";
 import { CreateExam } from "./app/components/CreateExam";
 import { ExaminerDashboard } from "./app/components/ExaminerDashboard";
+import { ExamErrorBoundary } from "./app/components/ExamErrorBoundary";
 import { MainLayout } from "./app/MainLayout";
 
 // Protected route wrapper - redirects to login if not authenticated
@@ -28,7 +31,14 @@ function ProtectedRoute() {
   const location = useLocation();
 
   if (!user) {
-    return <Navigate to="/" state={{ from: location }} replace />;
+    const isAdminPath = location.pathname.startsWith("/admin");
+    return (
+      <Navigate
+        to={isAdminPath ? "/admin-login" : "/"}
+        state={{ from: location }}
+        replace
+      />
+    );
   }
 
   return <Outlet />;
@@ -38,7 +48,11 @@ function ProtectedRoute() {
 function AdminRoute() {
   const { user } = useAuth();
 
-  if (!user || (user.role !== "admin" && user.role !== "moderator")) {
+  if (!user) {
+    return <Navigate to="/admin-login" replace />;
+  }
+
+  if (user.role !== "admin") {
     return <Navigate to="/dashboard" replace />;
   }
 
@@ -94,6 +108,8 @@ export function AppRouter() {
         {/* Public routes */}
         <Route element={<PublicRoute />}>
           <Route path="/" element={<LoginScreen />} />
+          <Route path="/admin-login" element={<AdminLoginScreen />} />
+          <Route path="/signup" element={<SignUpScreen />} />
         </Route>
 
         {/* Protected routes with main layout */}
@@ -127,7 +143,7 @@ export function AppRouter() {
 
           {/* Active Exam - No Layout - Student Only */}
           <Route element={<StudentRoute />}>
-            <Route path="/exam/:examId" element={<ActiveExam />} />
+            <Route path="/exam/:examId" element={<ExamErrorBoundary><ActiveExam /></ExamErrorBoundary>} />
           </Route>
         </Route>
 

@@ -36,7 +36,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ["student", "examiner", "admin", "moderator"],
+      enum: ["student", "examiner", "admin"],
       default: "student",
     },
     profilePicture: {
@@ -57,6 +57,15 @@ const userSchema = new mongoose.Schema(
       select: false,
     },
     resetPasswordExpire: {
+      type: Date,
+      select: false,
+    },
+    // Refresh token fields (hashed, for token rotation)
+    refreshToken: {
+      type: String,
+      select: false,
+    },
+    refreshTokenExpire: {
       type: Date,
       select: false,
     },

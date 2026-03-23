@@ -98,6 +98,14 @@ const submissionSchema = new mongoose.Schema(
       required: true,
     },
     answers: [answerSchema],
+    draftCurrentQuestion: {
+      type: Number,
+      default: 0,
+    },
+    draftMarkedQuestions: {
+      type: [Number],
+      default: [],
+    },
     score: Number,
     totalQuestions: Number,
     correctAnswers: Number,

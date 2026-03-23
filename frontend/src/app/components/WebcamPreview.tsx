@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle } from "lucide-react";
+import { getBuiltInCameraStream } from "../../lib/mediaPolicy";
 
 const API_BASE =
   ((import.meta as any).env.VITE_API_BASE as string) ||
@@ -8,17 +9,32 @@ const API_BASE =
 interface WebcamPreviewProps {
   onReady?: () => void;
   onFaceDetectionChange?: (detected: boolean) => void;
+  /** Optional external ref so parent components can capture frames from the same stream. */
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
 }
 
 export function WebcamPreview({
   onReady,
   onFaceDetectionChange,
+  videoRef: externalVideoRef,
 }: WebcamPreviewProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const internalVideoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = externalVideoRef ?? internalVideoRef;
+  const onReadyRef = useRef(onReady);
+  const onFaceDetectionChangeRef = useRef(onFaceDetectionChange);
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [faceDetected, setFaceDetected] = useState<boolean | null>(null);
   const [isCheckingFace, setIsCheckingFace] = useState(false);
+
+  // Keep callback refs current without forcing webcam/detection effects to restart.
+  useEffect(() => {
+    onReadyRef.current = onReady;
+  }, [onReady]);
+
+  useEffect(() => {
+    onFaceDetectionChangeRef.current = onFaceDetectionChange;
+  }, [onFaceDetectionChange]);
 
   useEffect(() => {
     if (!isReady || error) {
@@ -34,7 +50,11 @@ export function WebcamPreview({
 
     const detectFace = async () => {
       const video = videoRef.current;
-      if (!video || !ctx || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      if (
+        !video ||
+        !ctx ||
+        video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA
+      ) {
         return;
       }
 
@@ -43,16 +63,22 @@ export function WebcamPreview({
       const image = canvas.toDataURL("image/jpeg", 0.7);
 
       try {
-        const response = await fetch(`${API_BASE}/proctoring/system-check/frame`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ image }),
-        });
+        const response = await fetch(
+          `${API_BASE}/proctoring/system-check/frame`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ image }),
+          },
+        );
 
         if (!response.ok) {
+          console.warn(
+            `[WebcamPreview] Face check failed with status ${response.status}`,
+          );
           if (!cancelled) {
             setFaceDetected(false);
-            onFaceDetectionChange?.(false);
+            onFaceDetectionChangeRef.current?.(false);
           }
           return;
         }
@@ -62,12 +88,13 @@ export function WebcamPreview({
 
         if (!cancelled) {
           setFaceDetected(detected);
-          onFaceDetectionChange?.(detected);
+          onFaceDetectionChangeRef.current?.(detected);
         }
-      } catch {
+      } catch (err) {
+        console.error("[WebcamPreview] Face detection error:", err);
         if (!cancelled) {
           setFaceDetected(false);
-          onFaceDetectionChange?.(false);
+          onFaceDetectionChangeRef.current?.(false);
         }
       } finally {
         if (!cancelled) {
@@ -85,27 +112,28 @@ export function WebcamPreview({
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [error, isReady, onFaceDetectionChange]);
+  }, [error, isReady, videoRef]);
 
   useEffect(() => {
     async function initWebcam() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
+        const stream = await getBuiltInCameraStream({
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           setIsReady(true);
           setError(null);
           setFaceDetected(null);
-          onReady?.();
+          onReadyRef.current?.();
         }
       } catch (err: any) {
         setError(err.message || "Failed to access webcam");
         setIsReady(false);
         setFaceDetected(false);
-        onFaceDetectionChange?.(false);
+        onFaceDetectionChangeRef.current?.(false);
       }
     }
 
@@ -118,7 +146,7 @@ export function WebcamPreview({
           .forEach((track) => track.stop());
       }
     };
-  }, [onFaceDetectionChange, onReady]);
+  }, [videoRef]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -129,6 +157,7 @@ export function WebcamPreview({
           playsInline
           muted
           className="w-full h-full object-cover"
+          style={{ transform: "scaleX(-1)" }}
         />
         {!isReady && !error && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/50">
@@ -144,7 +173,7 @@ export function WebcamPreview({
             <div className="font-semibold text-red-800">Webcam Error</div>
             <div className="text-sm text-red-700">{error}</div>
             <div className="text-xs text-red-600 mt-1">
-              Please allow camera permissions and try again.
+              Allow camera permission and use your built-in webcam.
             </div>
           </div>
         </div>

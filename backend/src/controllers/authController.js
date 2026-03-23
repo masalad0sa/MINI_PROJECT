@@ -4,14 +4,26 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 
-// Generate JWT Token
-const generateToken = (id) => {
+// ── Token helpers ──────────────────────────────────────────────
+
+const ACCESS_TOKEN_EXPIRE = process.env.JWT_EXPIRE || "15m";
+const REMEMBER_ME_ACCESS_TOKEN_EXPIRE =
+  process.env.JWT_REMEMBER_EXPIRE || "7d";
+const REFRESH_TOKEN_EXPIRE = process.env.JWT_REFRESH_EXPIRE || "7d";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+const generateAccessToken = (id, expiresIn = ACCESS_TOKEN_EXPIRE) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRE || "7d",
+    expiresIn,
   });
 };
 
-// Decode token to get expiration
+const generateRefreshToken = (id) => {
+  return jwt.sign({ id, type: "refresh" }, process.env.JWT_SECRET, {
+    expiresIn: REFRESH_TOKEN_EXPIRE,
+  });
+};
+
 const getTokenExpiration = (token) => {
   try {
     const decoded = jwt.decode(token);
@@ -21,27 +33,68 @@ const getTokenExpiration = (token) => {
   }
 };
 
+const hashToken = (token) => {
+  return crypto.createHash("sha256").update(token).digest("hex");
+};
+
+/**
+ * Set JWT access token in an httpOnly cookie + return in response body.
+ * Dual delivery ensures backward compatibility with header-based auth.
+ */
+const setTokenCookie = (res, token) => {
+  const decoded = jwt.decode(token);
+  const maxAge = decoded?.exp
+    ? (decoded.exp * 1000) - Date.now()
+    : 15 * 60 * 1000; // default 15min
+
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: IS_PRODUCTION,
+    sameSite: IS_PRODUCTION ? "strict" : "lax",
+    maxAge: Math.max(maxAge, 1000),
+    path: "/",
+  });
+};
+
+const setRefreshCookie = (res, refreshToken) => {
+  const decoded = jwt.decode(refreshToken);
+  const maxAge = decoded?.exp
+    ? (decoded.exp * 1000) - Date.now()
+    : 7 * 24 * 60 * 60 * 1000; // default 7d
+
+  res.cookie("refreshToken", refreshToken, {
+    httpOnly: true,
+    secure: IS_PRODUCTION,
+    sameSite: IS_PRODUCTION ? "strict" : "lax",
+    maxAge: Math.max(maxAge, 1000),
+    path: "/api/auth/refresh", // Only sent to the refresh endpoint
+  });
+};
+
+const clearAuthCookies = (res) => {
+  res.clearCookie("token", { path: "/" });
+  res.clearCookie("refreshToken", { path: "/api/auth/refresh" });
+  res.clearCookie("csrf_token", { path: "/" });
+};
+
+// ── Auth endpoints ─────────────────────────────────────────────
+
 export const register = async (req, res) => {
   try {
-    const { email, password, name, userId } = req.body;
-    // SECURITY FIX: Ignore role from request body - always create as student
-    const role = "student";
+    const { email, password, name, userId, role } = req.body;
 
-    // Validation
     if (!email || !password || !name || !userId) {
       return res
         .status(400)
         .json({ message: "Please provide all required fields (email, password, name, userId)" });
     }
 
-    // Password strength validation
     if (password.length < 6) {
       return res
         .status(400)
         .json({ message: "Password must be at least 6 characters" });
     }
 
-    // UserId validation
     if (userId.length < 3 || userId.length > 20) {
       return res
         .status(400)
@@ -54,27 +107,34 @@ export const register = async (req, res) => {
         .json({ message: "User ID can only contain letters, numbers, and underscores" });
     }
 
-    // Check if email exists
     const emailExists = await User.findOne({ email: email.toLowerCase() });
     if (emailExists) {
       return res.status(409).json({ message: "Email already registered" });
     }
 
-    // Check if userId exists
     const userIdExists = await User.findOne({ userId });
     if (userIdExists) {
       return res.status(409).json({ message: "User ID already taken" });
     }
 
-    // Create user (always as student)
     const user = await User.create({ email, password, name, userId, role });
 
-    // Generate token
-    const token = generateToken(user._id);
+    // Generate tokens
+    const token = generateAccessToken(user._id);
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Store hashed refresh token
+    user.refreshToken = hashToken(refreshToken);
+    user.refreshTokenExpire = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    await user.save({ validateBeforeSave: false });
+
+    // Set cookies
+    setTokenCookie(res, token);
+    setRefreshCookie(res, refreshToken);
 
     res.status(201).json({
       success: true,
-      token,
+      token, // Also in response body for backward compatibility
       user: {
         id: user._id,
         userId: user.userId,
@@ -92,16 +152,14 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, rememberMe } = req.body;
 
-    // Validation
     if (!email || !password) {
       return res
         .status(400)
         .json({ message: "Please provide email and password" });
     }
 
-    // Find user and select password
     const user = await User.findOne({ email: email.toLowerCase() }).select(
       "+password",
     );
@@ -109,25 +167,37 @@ export const login = async (req, res) => {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    // Check password
     const isPasswordValid = await user.matchPassword(password);
     if (!isPasswordValid) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
-    // Check if user is suspended
     if (user.isSuspended) {
       return res
         .status(403)
         .json({ message: "Your account has been suspended" });
     }
 
-    // Generate token
-    const token = generateToken(user._id);
+    // Generate tokens
+    const token = generateAccessToken(
+      user._id,
+      rememberMe ? REMEMBER_ME_ACCESS_TOKEN_EXPIRE : ACCESS_TOKEN_EXPIRE,
+    );
+    const refreshToken = generateRefreshToken(user._id);
+
+    // Store hashed refresh token
+    await User.findByIdAndUpdate(user._id, {
+      refreshToken: hashToken(refreshToken),
+      refreshTokenExpire: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    // Set cookies
+    setTokenCookie(res, token);
+    setRefreshCookie(res, refreshToken);
 
     res.status(200).json({
       success: true,
-      token,
+      token, // Also in response body for backward compatibility
       user: {
         id: user._id,
         userId: user.userId,
@@ -170,17 +240,114 @@ export const logout = async (req, res) => {
     const userId = req.user._id;
 
     if (token) {
-      // Get token expiration
       const expiresAt = getTokenExpiration(token) || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
-      // Add token to blacklist
       await TokenBlacklist.blacklist(token, userId, expiresAt);
     }
 
+    // Clear refresh token from DB
+    await User.findByIdAndUpdate(userId, {
+      refreshToken: undefined,
+      refreshTokenExpire: undefined,
+    });
+
+    // Clear all auth cookies
+    clearAuthCookies(res);
+
     res.status(200).json({ success: true, message: "Logout successful" });
   } catch (error) {
-    // Even if blacklisting fails, client should clear token
+    // Even if cleanup fails, clear cookies and tell client it's done
+    clearAuthCookies(res);
     res.status(200).json({ success: true, message: "Logout successful" });
+  }
+};
+
+/**
+ * Refresh access token using a valid refresh token.
+ * Implements token rotation: issues a new refresh token and invalidates the old one.
+ */
+export const refreshAccessToken = async (req, res) => {
+  try {
+    // Get refresh token from cookie or body
+    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+
+    if (!refreshToken) {
+      return res.status(401).json({ message: "Refresh token missing" });
+    }
+
+    let decoded;
+    try {
+      decoded = jwt.verify(refreshToken, process.env.JWT_SECRET);
+    } catch (error) {
+      clearAuthCookies(res);
+      if (error.name === "TokenExpiredError") {
+        return res.status(401).json({ message: "Refresh token expired. Please login again." });
+      }
+      return res.status(401).json({ message: "Invalid refresh token" });
+    }
+
+    if (decoded.type !== "refresh") {
+      return res.status(401).json({ message: "Invalid token type" });
+    }
+
+    // Find user and verify the hashed refresh token matches
+    const user = await User.findById(decoded.id).select(
+      "+refreshToken +refreshTokenExpire"
+    );
+
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    if (user.isSuspended) {
+      clearAuthCookies(res);
+      return res.status(403).json({ message: "Account suspended" });
+    }
+
+    const hashedIncoming = hashToken(refreshToken);
+    if (user.refreshToken !== hashedIncoming) {
+      // Token reuse detected — potential theft. Invalidate all tokens.
+      await User.findByIdAndUpdate(user._id, {
+        refreshToken: undefined,
+        refreshTokenExpire: undefined,
+      });
+      clearAuthCookies(res);
+      return res.status(401).json({
+        message: "Refresh token reuse detected. Please login again.",
+      });
+    }
+
+    if (user.refreshTokenExpire && user.refreshTokenExpire < new Date()) {
+      clearAuthCookies(res);
+      return res.status(401).json({ message: "Refresh token expired" });
+    }
+
+    // Token rotation: generate new pair
+    const newAccessToken = generateAccessToken(user._id);
+    const newRefreshToken = generateRefreshToken(user._id);
+
+    // Store new hashed refresh token
+    await User.findByIdAndUpdate(user._id, {
+      refreshToken: hashToken(newRefreshToken),
+      refreshTokenExpire: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+
+    // Set cookies
+    setTokenCookie(res, newAccessToken);
+    setRefreshCookie(res, newRefreshToken);
+
+    res.status(200).json({
+      success: true,
+      token: newAccessToken,
+      user: {
+        id: user._id,
+        userId: user.userId,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Token refresh failed", error: error.message });
   }
 };
 
@@ -194,29 +361,24 @@ export const resetPassword = async (req, res) => {
 
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
-      // Don't reveal if user exists or not for security
       return res.status(200).json({
         success: true,
         message: "If an account with that email exists, a password reset link has been sent.",
       });
     }
 
-    // Generate reset token
     const resetToken = crypto.randomBytes(32).toString("hex");
     const resetTokenHash = crypto
       .createHash("sha256")
       .update(resetToken)
       .digest("hex");
 
-    // Save reset token to user (expires in 1 hour)
     user.resetPasswordToken = resetTokenHash;
     user.resetPasswordExpire = Date.now() + 60 * 60 * 1000;
     await user.save({ validateBeforeSave: false });
 
-    // Create reset URL
     const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/reset-password/${resetToken}`;
 
-    // Send email (if SMTP is configured)
     if (process.env.SMTP_HOST && process.env.SMTP_USER) {
       try {
         const transporter = nodemailer.createTransport({
@@ -243,10 +405,8 @@ export const resetPassword = async (req, res) => {
         });
       } catch (emailError) {
         console.error("Email send failed:", emailError.message);
-        // Continue anyway - don't expose email config issues
       }
     } else {
-      // Log reset token for development (remove in production)
       console.log(`[DEV] Password reset token for ${email}: ${resetToken}`);
     }
 
@@ -261,7 +421,6 @@ export const resetPassword = async (req, res) => {
   }
 };
 
-// Verify reset token and set new password
 export const confirmResetPassword = async (req, res) => {
   try {
     const { token, password } = req.body;
@@ -278,13 +437,11 @@ export const confirmResetPassword = async (req, res) => {
         .json({ message: "Password must be at least 6 characters" });
     }
 
-    // Hash the token to compare with stored hash
     const resetTokenHash = crypto
       .createHash("sha256")
       .update(token)
       .digest("hex");
 
-    // Find user with valid reset token
     const user = await User.findOne({
       resetPasswordToken: resetTokenHash,
       resetPasswordExpire: { $gt: Date.now() },
@@ -296,7 +453,6 @@ export const confirmResetPassword = async (req, res) => {
         .json({ message: "Invalid or expired reset token" });
     }
 
-    // Set new password
     user.password = password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpire = undefined;
@@ -312,4 +468,3 @@ export const confirmResetPassword = async (req, res) => {
       .json({ message: "Password reset failed", error: error.message });
   }
 };
-

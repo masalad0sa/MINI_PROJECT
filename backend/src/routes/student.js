@@ -4,6 +4,7 @@ import {
   submitExam,
   getExamResults,
   getExamSessionStatus,
+  saveExamProgress,
   postExamHeartbeat,
   startExam,
   logViolation,
@@ -16,6 +17,12 @@ router.get("/dashboard/:id", protectStudent, requireStudentRole, getStudentDashb
 router.post("/exam/start/:examId", protectStudent, requireStudentRole, startExam);
 router.post("/exam/submit", protectStudent, requireStudentRole, submitExam);
 router.post("/exam/violation", protectStudent, requireStudentRole, logViolation);
+router.patch(
+  "/exam/session/:sessionId/progress",
+  protectStudent,
+  requireStudentRole,
+  saveExamProgress,
+);
 router.post(
   "/exam/session/:sessionId/heartbeat",
   protectStudent,

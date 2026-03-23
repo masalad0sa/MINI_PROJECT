@@ -1,0 +1,256 @@
+Perfect 👍
+Here’s a **realistic 7-day study + build plan** starting from **26 January**, designed exactly for **your AI-based online proctoring system**.
+No overload, no paid tools, and **by the end you’ll have something demo-worthy**.
+
+---
+
+# 🗓️ 7-DAY PLAN (26 JAN → 1 FEB)
+
+**Goal:** From prototype → trained AI-assisted proctoring system
+
+---
+
+## 🟢 **DAY 1 – 26 JAN (FOUNDATION DAY)**
+
+### 🎯 Goal: Understand the building blocks
+
+### What to learn
+
+* What is **object detection**
+* What is **face mesh & landmarks**
+* How webcam pipelines work
+
+### YouTube (watch only these)
+
+1. **YOLOv8 Object Detection Basics**
+
+   * Search: `YOLOv8 object detection python webcam`
+2. **MediaPipe Face Mesh Python**
+
+   * Search: `mediapipe face mesh python tutorial`
+
+⏱️ Time: ~2–3 hours
+
+### What to DO
+
+✔ Run **any** YOLO webcam demo
+✔ Run **any** MediaPipe face mesh demo
+✔ Don’t modify anything yet
+
+📌 **Outcome:**
+
+> “I understand how YOLO & MediaPipe work separately”
+
+---
+
+## 🟢 **DAY 2 – 27 JAN (YOLO HANDS-ON)**
+
+### 🎯 Goal: Object detection for cheating objects
+
+### What to learn
+
+* YOLO classes
+* Confidence threshold
+* Bounding boxes
+
+### YouTube
+
+* **Train YOLOv8 on Custom Dataset (Ultralytics)**
+
+### What to DO
+
+✔ Run YOLO webcam
+✔ Detect:
+
+* person
+* cell phone
+* book
+
+✔ Print detection count on screen
+
+📌 **Outcome:**
+
+> Phone & multiple people detection works live
+
+---
+
+## 🟢 **DAY 3 – 28 JAN (FACE + GAZE UNDERSTANDING)**
+
+### 🎯 Goal: Attention detection (not rules yet)
+
+### What to learn
+
+* Head pose (yaw, pitch)
+* Eye landmarks
+* Iris position (basic gaze)
+
+### YouTube
+
+* `mediapipe face landmarks head pose estimation`
+* `eye gaze estimation mediapipe python`
+
+### What to DO
+
+✔ Extract:
+
+* yaw
+* pitch
+* eye center position
+
+✔ Print values (no decisions)
+
+📌 **Outcome:**
+
+> You can **measure attention**, not just guess
+
+---
+
+## 🟢 **DAY 4 – 29 JAN (DATASET CREATION DAY)**
+
+### 🎯 Goal: Create your OWN dataset (most important)
+
+### What to record (short clips)
+
+| Scenario        | Frames |
+| --------------- | ------ |
+| Focused         | 300    |
+| Looking away    | 300    |
+| Phone usage     | 300    |
+| Multiple people | 200    |
+
+### What to DO
+
+✔ Auto-save frames when:
+
+* phone detected
+* face count > 1
+* yaw > threshold
+
+✔ Store folders:
+
+```
+dataset/
+ ├ focused/
+ ├ phone/
+ ├ multiple_people/
+ ├ distracted/
+```
+
+📌 **Outcome:**
+
+> You now have **real training data**
+
+---
+
+## 🟢 **DAY 5 – 30 JAN (TRAIN AI MODEL)**
+
+### 🎯 Goal: Replace rules with AI
+
+### What to learn
+
+* Feature vectors
+* Classification
+
+### What to DO
+
+1. Create CSV:
+
+```text
+yaw,pitch,gaze_x,phone,faces,label
+```
+
+2. Train:
+
+* Random Forest (easy)
+* OR Logistic Regression
+
+```python
+model.fit(X_train, y_train)
+```
+
+3. Test accuracy
+
+📌 **Outcome:**
+
+> AI decides cheating vs focused
+
+---
+
+## 🟢 **DAY 6 – 31 JAN (INTEGRATION + SCREENSHOT LOGIC)**
+
+### 🎯 Goal: Make it a “system”
+
+### What to DO
+
+✔ Integrate:
+
+* YOLO
+* MediaPipe
+* Trained classifier
+
+✔ If cheating detected:
+
+* Auto screenshot
+* Save with timestamp
+
+```text
+cheating_logs/
+  2026-01-31_10-45_phone.png
+```
+
+✔ Display:
+
+* Status
+* Confidence %
+
+📌 **Outcome:**
+
+> Fully working **AI proctoring demo**
+
+---
+
+## 🟢 **DAY 7 – 1 FEB (EVALUATION + VIVA PREP)**
+
+### 🎯 Goal: Make it exam-ready
+
+### What to prepare
+
+✔ Accuracy / precision / recall
+✔ Confusion matrix
+✔ Limitations slide:
+
+* Lighting
+* Occlusion
+* Webcam quality
+
+### Key viva sentence (MEMORIZE THIS 🔥)
+
+> “We combined rule-based vision with a trained machine learning classifier to improve robustness and reduce false positives.”
+
+📌 **Outcome:**
+
+> Project is **defendable & professional**
+
+---
+
+# 📌 WHAT YOU WILL HAVE AFTER 1 WEEK
+
+✅ Custom dataset
+✅ YOLO object detection
+✅ Eye + gaze features
+✅ Trained ML model
+✅ Screenshot evidence system
+✅ Strong viva explanation
+
+---
+
+# 🚀 NEXT (OPTIONAL BUT POWERFUL)
+
+If you want, I can:
+
+* Convert this into **B.Tech final report**
+* Write **pseudo-code + flowchart**
+* Prepare **10 viva Q&A**
+* Help you publish a **mini research paper**
+
+Just tell me what you want next, bro 💪

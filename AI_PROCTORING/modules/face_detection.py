@@ -16,7 +16,7 @@ class FaceDetector:
         self.min_detection_confidence = min_detection_confidence
         self.min_face_area_ratio = min_face_area_ratio
 
-    def detect_faces(self, frame):
+    def detect_faces(self, frame, draw=True):
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.face.process(rgb)
 
@@ -42,23 +42,24 @@ class FaceDetector:
 
                 valid_detections.append((x, y, width, height, confidence))
 
-        for x, y, width, height, confidence in valid_detections:
-            cv2.rectangle(
-                frame,
-                (x, y),
-                (x + width, y + height),
-                (0, 255, 0),
-                2,
-            )
-            cv2.putText(
-                frame,
-                f"{confidence:.2f}",
-                (x, max(20, y - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (0, 255, 0),
-                1,
-            )
+        if draw:
+            for x, y, width, height, confidence in valid_detections:
+                cv2.rectangle(
+                    frame,
+                    (x, y),
+                    (x + width, y + height),
+                    (0, 255, 0),
+                    2,
+                )
+                cv2.putText(
+                    frame,
+                    f"{confidence:.2f}",
+                    (x, max(20, y - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 255, 0),
+                    1,
+                )
 
         face_count = len(valid_detections)
         return frame, face_count

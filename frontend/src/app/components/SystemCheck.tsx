@@ -11,6 +11,7 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
+import { getBuiltInCameraStream } from "../../lib/mediaPolicy";
 
 const API_BASE =
   ((import.meta as any).env.VITE_API_BASE as string) ||
@@ -29,6 +30,7 @@ export function SystemCheck() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [serviceError, setServiceError] = useState("");
 
   const [checks, setChecks] = useState<CheckItem[]>([
     {
@@ -48,7 +50,7 @@ export function SystemCheck() {
     {
       id: "webcam",
       label: "Webcam Access",
-      description: "Camera permission required",
+      description: "Built-in camera permission required",
       status: "pending",
       icon: Camera,
     },
@@ -76,6 +78,7 @@ export function SystemCheck() {
   const detectFaceInFrame = useCallback(async (): Promise<boolean> => {
     const video = videoRef.current;
     if (!video) return false;
+    setServiceError("");
 
     // Wait until we have video data to capture.
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
@@ -105,10 +108,20 @@ export function SystemCheck() {
             const data = await response.json();
             const faceCount = Number(data?.face_count ?? 0);
             if (faceCount > 0) {
+              setServiceError("");
               return true;
+            }
+          } else {
+            const errData = await response.json().catch(() => null);
+            if (response.status === 503) {
+              setServiceError(
+                errData?.message ||
+                  "AI service unavailable for system check",
+              );
             }
           }
         } catch {
+          setServiceError("Could not reach proctoring backend");
           // Continue retrying; final status will be set to error.
         }
       }
@@ -145,8 +158,10 @@ export function SystemCheck() {
     // Check 3: Webcam access
     updateCheck("webcam", "checking");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: 640, height: 480 },
+      const stream = await getBuiltInCameraStream({
+        facingMode: "user",
+        width: 640,
+        height: 480,
       });
       streamRef.current = stream;
       if (videoRef.current) {
@@ -347,6 +362,11 @@ export function SystemCheck() {
                 </div>
               ))}
             </div>
+            {serviceError && (
+              <div className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                {serviceError}
+              </div>
+            )}
           </div>
         </div>
 

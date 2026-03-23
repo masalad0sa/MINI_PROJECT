@@ -1,9 +1,15 @@
+import {
+  getAuthToken,
+  setAuthToken,
+  clearAuthToken,
+  clearStoredAuthUser,
+} from "./authStorage";
 const API_BASE =
   ((import.meta as any).env.VITE_API_BASE as string) ||
   "http://localhost:5000/api";
 
 function getAuthHeader(): Record<string, string> {
-  const token = localStorage.getItem("token");
+  const token = getAuthToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
@@ -12,7 +18,7 @@ async function handleResponse(res: Response) {
   if (res.status === 401) {
     // Token expired or invalid - clear storage
     clearToken();
-    localStorage.removeItem("smartproctor_user");
+    clearStoredAuthUser();
     // Redirect to login
     window.location.href = "/";
     throw new Error("Session expired. Please login again.");
@@ -20,11 +26,15 @@ async function handleResponse(res: Response) {
   return res.json();
 }
 
-export async function login(email: string, password: string) {
+export async function login(
+  email: string,
+  password: string,
+  rememberMe = false,
+) {
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, rememberMe }),
   });
   return res.json();
 }
@@ -46,26 +56,36 @@ export async function logout() {
   }
 }
 
-export function setToken(token: string) {
-  localStorage.setItem("token", token);
+export function setToken(
+  token: string,
+  options?: { remember?: boolean; persistForMs?: number },
+) {
+  setAuthToken(token, options);
 }
 
 export function clearToken() {
-  localStorage.removeItem("token");
+  clearAuthToken();
 }
 
 export async function register(
   email: string,
   password: string,
   name: string,
+  userId: string,
   role = "student",
 ) {
-  const res = await fetch(`${API_BASE}/auth/register`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password, name, role }),
-  });
-  return res.json();
+  try {
+    const body = JSON.stringify({ email, password, name, userId, role });
+    const res = await fetch(`${API_BASE}/auth/register`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+    return res.json();
+  } catch (err) {
+    console.error("API Register Error:", err);
+    throw err;
+  }
 }
 
 export async function getExams() {
@@ -323,13 +343,45 @@ export const getAdminIntegrityReport = getExaminerIntegrityReport;
 export const getSubmissionReport = getExaminerSubmissionReport;
 export const takeSubmissionAction = takeExaminerSubmissionAction;
 
-export async function getAllUsers(role?: string) {
+interface GetAllUsersParams {
+  role?: string;
+  status?: "active" | "suspended";
+  search?: string;
+  page?: number;
+  limit?: number;
+}
+
+export async function getAllUsers(params: GetAllUsersParams = {}) {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...getAuthHeader(),
   };
-  const url = role ? `${API_BASE}/admin/users?role=${role}` : `${API_BASE}/admin/users`;
+  const query = new URLSearchParams();
+  if (params.role) query.set("role", params.role);
+  if (params.status) query.set("status", params.status);
+  if (params.search) query.set("search", params.search);
+  if (params.page) query.set("page", String(params.page));
+  if (params.limit) query.set("limit", String(params.limit));
+  const url = query.size
+    ? `${API_BASE}/admin/users?${query.toString()}`
+    : `${API_BASE}/admin/users`;
   const res = await fetch(url, { headers });
+  return handleResponse(res);
+}
+
+export async function changeUserRole(
+  userId: string,
+  role: "student" | "examiner" | "admin",
+) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/admin/users/${userId}/role`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ role }),
+  });
   return handleResponse(res);
 }
 
@@ -353,6 +405,36 @@ export async function unsuspendStudent(studentId: string) {
   };
   const res = await fetch(`${API_BASE}/admin/unsuspend/${studentId}`, {
     method: "POST",
+    headers,
+  });
+  return handleResponse(res);
+}
+
+export async function saveStudentExamProgress(
+  sessionId: string,
+  answers: Array<number | null>,
+  currentQuestion: number,
+  markedQuestions: number[],
+) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/student/exam/session/${sessionId}/progress`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify({ answers, currentQuestion, markedQuestions }),
+  });
+  return handleResponse(res);
+}
+
+export async function deleteUser(userId: string) {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...getAuthHeader(),
+  };
+  const res = await fetch(`${API_BASE}/admin/users/${userId}`, {
+    method: "DELETE",
     headers,
   });
   return handleResponse(res);

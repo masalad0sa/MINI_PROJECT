@@ -1,11 +1,64 @@
-
-import axios from 'axios';
+import axios from "axios";
 import Submission from "../models/Submission.js";
 
 // Environment variable for Python Service URL
-const PYTHON_SERVICE_URL = process.env.PYTHON_SERVICE_URL || 'http://localhost:8000';
+const PYTHON_SERVICE_URL =
+  process.env.PYTHON_SERVICE_URL || "http://localhost:8000";
 const AI_VIOLATION_COOLDOWN_MS = 8000;
 const aiViolationCooldownCache = new Map();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const postToPythonWithRetry = async (
+  endpoint,
+  payload,
+  {
+    timeout = 8000,
+    maxAttempts = 3,
+    initialDelayMs = 400,
+  } = {},
+) => {
+  let delayMs = initialDelayMs;
+  let lastError;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await axios.post(`${PYTHON_SERVICE_URL}${endpoint}`, payload, {
+        timeout,
+      });
+    } catch (error) {
+      lastError = error;
+      const status = error?.response?.status;
+      const retriable =
+        !status || status >= 500 || status === 429 || status === 408;
+      if (!retriable || attempt >= maxAttempts) break;
+      await sleep(delayMs);
+      delayMs = Math.min(delayMs * 2, 2500);
+    }
+  }
+
+  throw lastError;
+};
+
+const buildPythonServiceError = (error, endpointName) => {
+  const status = error?.response?.status;
+  const detail =
+    error?.response?.data || error?.message || "Unknown Python service error";
+
+  if (status === 404) {
+    return {
+      status,
+      detail,
+      message: `AI endpoint ${endpointName} not found on ${PYTHON_SERVICE_URL}. Ensure AI_PROCTORING/server.py is running.`,
+    };
+  }
+
+  return {
+    status: status ?? null,
+    detail,
+    message: `AI service unavailable for ${endpointName}`,
+  };
+};
 
 const AI_SEVERITY_BY_TYPE = {
   PROHIBITED_OBJECT: "CRITICAL",
@@ -33,7 +86,9 @@ const normalizeDetectedObjects = (analysisResult) => {
       ? analysisResult.high_confidence_objects
       : []),
   ];
-  return [...new Set(merged.map((value) => String(value).trim()).filter(Boolean))];
+  return [
+    ...new Set(merged.map((value) => String(value).trim()).filter(Boolean)),
+  ];
 };
 
 const buildViolationDescription = (violationType, analysisResult) => {
@@ -133,15 +188,16 @@ const persistAIViolation = async ({
 export const processFrame = async (req, res) => {
   try {
     const { id: examId } = req.params;
-    const { image, sessionId } = req.body;
+    const { image, sessionId, calibration } = req.body;
+    const objectsOnly = Boolean(req.body.objectsOnly);
+    const trackingOnly = Boolean(req.body.trackingOnly);
+    const includeProcessedImage = Boolean(req.body.includeProcessedImage);
     const resolvedSessionId =
       sessionId || `${examId || "unknown"}:${req.ip || "local"}`;
 
-    console.log(`[Proctoring] Received frame for exam ${examId}`); // DEBUG LOG
-
     if (!image) {
-      console.error('[Proctoring] No image data received');
-      return res.status(400).json({ message: 'Image data is required' });
+      console.error("[Proctoring] No image data received");
+      return res.status(400).json({ message: "Image data is required" });
     }
 
     // Verify exam exists (optional, but good practice)
@@ -152,13 +208,24 @@ export const processFrame = async (req, res) => {
 
     // Forward to Python Service
     try {
-      const response = await axios.post(`${PYTHON_SERVICE_URL}/process_frame`, {
-        image,
-        session_id: resolvedSessionId,
-        exam_id: examId || null,
-      }, {
-        timeout: 12000,
-      });
+      const isRealtimeTracking = trackingOnly && !objectsOnly;
+      const response = await postToPythonWithRetry(
+        "/process_frame",
+        {
+          image,
+          session_id: resolvedSessionId,
+          exam_id: examId || null,
+          objects_only: objectsOnly,
+          tracking_only: trackingOnly,
+          include_processed_image: includeProcessedImage,
+          calibration: calibration || null,
+        },
+        {
+          timeout: isRealtimeTracking ? 3500 : 12000,
+          maxAttempts: isRealtimeTracking ? 1 : 3,
+          initialDelayMs: isRealtimeTracking ? 0 : 500,
+        },
+      );
 
       const analysisResult = response.data;
       const violationType = analysisResult?.violation_type;
@@ -196,8 +263,12 @@ export const processFrame = async (req, res) => {
 
       // Fallback for clients without session id: allow client-side logging flow.
       const effectiveShouldLogViolation =
-        sessionId && violationType ? backendViolationLogged : shouldLogViolation;
-      const shouldNotifyViolation = Boolean(violationType && shouldLogViolation);
+        sessionId && violationType
+          ? backendViolationLogged
+          : shouldLogViolation;
+      const shouldNotifyViolation = Boolean(
+        violationType && shouldLogViolation,
+      );
 
       // Return analysis to frontend
       res.json({
@@ -216,21 +287,21 @@ export const processFrame = async (req, res) => {
         backend_should_auto_submit: backendShouldAutoSubmit,
         backend_log_reason: backendLogReason,
       });
-
     } catch (pythonError) {
-      const pythonDetail =
-        pythonError?.response?.data || pythonError?.message || "Unknown Python service error";
-      console.error('Python Service Error:', pythonDetail);
-      // Fallback or Error response
+      const pythonErr = buildPythonServiceError(
+        pythonError,
+        "/process_frame",
+      );
+      console.error("Python Service Error:", pythonErr.detail);
       res.status(503).json({
-        message: 'AI Proctoring Service unavailable',
-        error: pythonDetail,
+        message: pythonErr.message,
+        error: pythonErr.detail,
+        pythonStatus: pythonErr.status,
       });
     }
-
   } catch (error) {
-    console.error('Frame Processing Error:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error("Frame Processing Error:", error);
+    res.status(500).json({ message: "Internal server error" });
   }
 };
 
@@ -259,6 +330,74 @@ export const getProctoringHealth = async (_req, res) => {
         python: "unreachable",
         error: pythonDetail,
       },
+    });
+  }
+};
+
+/**
+ * Calibration endpoint — collects baseline gaze/head data while the student
+ * looks at the center of the screen. Proxies to the Python /calibrate endpoint.
+ */
+export const calibrateGaze = async (req, res) => {
+  try {
+    const { images } = req.body;
+    if (!Array.isArray(images) || images.length < 2) {
+      return res
+        .status(400)
+        .json({ message: "At least 2 calibration images required" });
+    }
+
+    const response = await postToPythonWithRetry(
+      "/calibrate",
+      { images },
+      {
+        timeout: 20000,
+        maxAttempts: 2,
+        initialDelayMs: 600,
+      },
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    const pythonErr = buildPythonServiceError(error, "/calibrate");
+    console.error("[Calibrate] Python error:", pythonErr.detail);
+    res.status(503).json({
+      message: pythonErr.message,
+      error: pythonErr.detail,
+      pythonStatus: pythonErr.status,
+    });
+  }
+};
+
+/**
+ * Lightweight system-check endpoint for pre-exam face detection.
+ * Does NOT create persistent AI session state — avoids memory leaks.
+ */
+export const systemCheckFrame = async (req, res) => {
+  try {
+    const { image } = req.body;
+    if (!image) {
+      return res.status(400).json({ message: "Image data is required" });
+    }
+
+    const response = await postToPythonWithRetry(
+      "/system_check",
+      { image },
+      {
+        timeout: 12000,
+        maxAttempts: 3,
+        initialDelayMs: 500,
+      },
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    const pythonErr = buildPythonServiceError(error, "/system_check");
+    console.error("[SystemCheck] Python error:", pythonErr.detail);
+    res.status(503).json({
+      message: pythonErr.message,
+      error: pythonErr.detail,
+      pythonStatus: pythonErr.status,
     });
   }
 };

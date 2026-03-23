@@ -1,5 +1,5 @@
 import Exam from "../models/Exam.js";
-import { Submission } from "../models/examiner.js";
+import Submission from "../models/Submission.js";
 
 export const createExam = async (req, res) => {
   try {

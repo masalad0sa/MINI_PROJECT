@@ -1,4 +1,6 @@
-import { User, Exam, Submission } from "../models/admin.js";
+import User from "../models/User.js";
+import Exam from "../models/Exam.js";
+import Submission from "../models/Submission.js";
 
 export const getAdminDashboard = async (req, res) => {
   try {
@@ -150,21 +152,145 @@ export const getActiveExamSessions = async (req, res) => {
 
 export const getAllUsers = async (req, res) => {
   try {
-    const { role } = req.query;
+    const { role, status, search, page = "1", limit = "10" } = req.query;
     const filter = {};
-    if (role) filter.role = role;
+    const parsedPage = Math.max(1, Number.parseInt(page, 10) || 1);
+    const parsedLimit = Math.min(
+      100,
+      Math.max(5, Number.parseInt(limit, 10) || 10),
+    );
 
-    const users = await User.find(filter).select("-password");
+    if (role && role !== "all") {
+      filter.role = role;
+    }
+
+    if (status === "active") {
+      filter.isSuspended = false;
+    } else if (status === "suspended") {
+      filter.isSuspended = true;
+    }
+
+    const normalizedSearch = String(search || "").trim();
+    if (normalizedSearch) {
+      const escapedSearch = normalizedSearch.replace(
+        /[.*+?^${}()|[\]\\]/g,
+        "\\$&",
+      );
+      const regex = new RegExp(escapedSearch, "i");
+      filter.$or = [{ name: regex }, { email: regex }, { userId: regex }];
+    }
+
+    const total = await User.countDocuments(filter);
+    const totalPages = Math.max(1, Math.ceil(total / parsedLimit));
+    const currentPage = Math.min(parsedPage, totalPages);
+    const skip = (currentPage - 1) * parsedLimit;
+
+    const users = await User.find(filter)
+      .select("-password")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parsedLimit);
 
     res.status(200).json({
       success: true,
       message: "Users fetched successfully",
       data: users,
+      pagination: {
+        page: currentPage,
+        limit: parsedLimit,
+        total,
+        totalPages,
+        hasNext: currentPage < totalPages,
+        hasPrev: currentPage > 1,
+      },
     });
   } catch (error) {
     res
       .status(500)
       .json({ message: "Failed to fetch users", error: error.message });
+  }
+};
+
+export const changeUserRole = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { role } = req.body || {};
+    const allowedRoles = new Set(["student", "examiner", "admin"]);
+
+    if (!allowedRoles.has(role)) {
+      return res.status(400).json({
+        message: "Invalid role. Allowed roles: student, examiner, admin",
+      });
+    }
+
+    const user = await User.findById(userId).select("_id role name");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const requesterId = req.user?._id?.toString?.() || "";
+    if (requesterId && requesterId === user._id.toString() && role !== "admin") {
+      return res.status(400).json({
+        message: "You cannot remove your own admin role",
+      });
+    }
+
+    user.role = role;
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "User role updated successfully",
+      data: {
+        userId: user._id,
+        role: user.role,
+      },
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to update user role", error: error.message });
+  }
+};
+
+export const deleteUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).select("_id role");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.role === "admin") {
+      return res.status(403).json({ message: "Admin users cannot be deleted" });
+    }
+
+    if (user.role === "student") {
+      await Submission.deleteMany({ studentId: user._id });
+    }
+
+    if (user.role === "examiner") {
+      const createdExams = await Exam.find({ createdBy: user._id }).select("_id");
+      const examIds = createdExams.map((exam) => exam._id);
+
+      if (examIds.length > 0) {
+        await Submission.deleteMany({ examId: { $in: examIds } });
+        await Exam.deleteMany({ _id: { $in: examIds } });
+      }
+    }
+
+    await User.findByIdAndDelete(user._id);
+
+    res.status(200).json({
+      success: true,
+      message: "User deleted successfully",
+      data: { userId: user._id, role: user.role },
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to delete user", error: error.message });
   }
 };
 

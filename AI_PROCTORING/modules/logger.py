@@ -19,23 +19,23 @@ class ExamLogger:
                     "multi_face",
                     "suspicion_score",
                     "risk_level",
-                    "phone_detected"
+                    "detected_objects"
                 ])
 
-    def log(self, gaze, head, angle, face_count, score, risk,detected_objects):
+    def log(self, gaze, head, angle, face_count, score, risk, detected_objects):
         multi_face = 1 if face_count > 1 else 0
-        
+
         with open(self.filename, mode="a", newline="") as file:
             writer = csv.writer(file)
             writer.writerow([
-            time.strftime("%Y-%m-%d %H:%M:%S"),
-            gaze,
-            head,
-            int(angle),
-            face_count,
-            multi_face,
-            score,
-            risk,
-            detected_objects
-        ])
+                time.strftime("%Y-%m-%d %H:%M:%S"),
+                gaze,
+                head,
+                int(angle),
+                face_count,
+                multi_face,
+                score,
+                risk,
+                detected_objects
+            ])
 
