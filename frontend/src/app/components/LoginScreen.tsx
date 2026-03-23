@@ -15,13 +15,14 @@ export function LoginScreen() {
   const [selectedRole, setSelectedRole] = useState<LoginRole>("student");
   const [email, setEmail] = useState(DEMO_EMAILS.student);
   const [password, setPassword] = useState("password123");
+  const [rememberMe, setRememberMe] = useState(false);
   const [localError, setLocalError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError("");
     try {
-      await login(email, password, selectedRole);
+      await login(email, password, selectedRole, rememberMe);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "Login failed");
     }
@@ -135,6 +136,17 @@ export function LoginScreen() {
             />
             <p className="text-xs text-slate-500 mt-1">Demo: password123</p>
           </div>
+
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              disabled={isLoading}
+              className="h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span>Remember me for 1 week</span>
+          </label>
 
           <button
             type="submit"

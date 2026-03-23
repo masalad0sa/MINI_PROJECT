@@ -14,6 +14,7 @@ import * as Progress from "@radix-ui/react-progress";
 import { useAuth } from "../../lib/AuthContext";
 import { WebcamPreview } from "./WebcamPreview";
 import * as api from "../../lib/api";
+import { getAuthToken } from "../../lib/authStorage";
 
 interface CalibrationBaselines {
   gaze_h_baseline: number;
@@ -187,7 +188,7 @@ export function PreExamCheck() {
 
     // Send frames to calibration endpoint
     try {
-      const token = localStorage.getItem("token");
+      const token = getAuthToken();
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };

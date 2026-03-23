@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
+import { getAuthToken } from "../lib/authStorage";
 
 const API_BASE =
   ((import.meta as any).env.VITE_API_BASE as string) ||
@@ -29,7 +30,7 @@ interface UseSocketReturn {
  *   const { socket, isConnected } = useSocket({ namespace: "/monitor" });
  *
  * The hook automatically:
- *   - Reads the JWT from localStorage
+ *   - Reads the JWT from auth storage
  *   - Connects with auth token in handshake
  *   - Reconnects on disconnect
  *   - Cleans up on unmount
@@ -44,7 +45,7 @@ export function useSocket({
   const connect = useCallback(() => {
     if (socketRef.current?.connected) return;
 
-    const token = localStorage.getItem("token");
+    const token = getAuthToken();
     if (!token) {
       console.warn("[useSocket] No auth token found, cannot connect");
       return;

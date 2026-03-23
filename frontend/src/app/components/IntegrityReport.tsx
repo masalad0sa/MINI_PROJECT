@@ -124,6 +124,9 @@ export function IntegrityReport() {
                 className="bg-white/20 border border-white/30 text-white rounded-lg px-4 py-2.5 [&>option]:text-slate-800 min-w-[200px]"
               >
                 <option value="">Select Exam</option>
+                <option value="all">
+                  {user?.role === "examiner" ? "All My Exams" : "All Exams"}
+                </option>
                 {exams.map((exam: any) => (
                   <option key={exam._id} value={exam._id}>{exam.title}</option>
                 ))}
@@ -170,6 +173,7 @@ export function IntegrityReport() {
               <div className="mt-4 flex items-center justify-between">
                 <div className="text-sm text-slate-600">
                   Showing {visibleReports.length} of {(reportData.reports || []).length} submissions
+                  {reportData.exam?.scope === "ALL" ? ` across ${reportData.exam?.examCount || 0} exams` : ""}
                 </div>
               </div>
             </div>
@@ -194,6 +198,11 @@ export function IntegrityReport() {
                         <div className="text-left">
                           <div className="font-semibold text-slate-800">{report.studentName}</div>
                           <div className="text-sm text-slate-500">@{report.studentUserId}</div>
+                          {selectedExamId === "all" && (
+                            <div className="text-xs text-slate-500">
+                              Exam: {report.examTitle || "Unknown Exam"}
+                            </div>
+                          )}
                         </div>
                       </div>
                       <div className="flex items-center gap-6">
@@ -221,6 +230,8 @@ export function IntegrityReport() {
                             <div className="grid grid-cols-2 gap-2 text-sm">
                               <div className="text-slate-500">Status</div>
                               <div className="font-medium text-slate-800 capitalize">{report.status}</div>
+                              <div className="text-slate-500">Exam</div>
+                              <div className="font-medium text-slate-800">{report.examTitle || reportData.exam?.title || "N/A"}</div>
                               <div className="text-slate-500">Score</div>
                               <div className="font-medium text-slate-800">{report.correctAnswers}/{report.totalQuestions}</div>
                               <div className="text-slate-500">Auto-submitted</div>

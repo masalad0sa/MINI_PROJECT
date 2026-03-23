@@ -7,12 +7,14 @@ import nodemailer from "nodemailer";
 // ── Token helpers ──────────────────────────────────────────────
 
 const ACCESS_TOKEN_EXPIRE = process.env.JWT_EXPIRE || "15m";
+const REMEMBER_ME_ACCESS_TOKEN_EXPIRE =
+  process.env.JWT_REMEMBER_EXPIRE || "7d";
 const REFRESH_TOKEN_EXPIRE = process.env.JWT_REFRESH_EXPIRE || "7d";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
-const generateAccessToken = (id) => {
+const generateAccessToken = (id, expiresIn = ACCESS_TOKEN_EXPIRE) => {
   return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: ACCESS_TOKEN_EXPIRE,
+    expiresIn,
   });
 };
 
@@ -150,7 +152,7 @@ export const register = async (req, res) => {
 
 export const login = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, rememberMe } = req.body;
 
     if (!email || !password) {
       return res
@@ -177,7 +179,10 @@ export const login = async (req, res) => {
     }
 
     // Generate tokens
-    const token = generateAccessToken(user._id);
+    const token = generateAccessToken(
+      user._id,
+      rememberMe ? REMEMBER_ME_ACCESS_TOKEN_EXPIRE : ACCESS_TOKEN_EXPIRE,
+    );
     const refreshToken = generateRefreshToken(user._id);
 
     // Store hashed refresh token

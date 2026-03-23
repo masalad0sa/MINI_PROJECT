@@ -7,13 +7,14 @@ export function AdminLoginScreen() {
   const { login, isLoading, error } = useAuth();
   const [email, setEmail] = useState("admin@example.com");
   const [password, setPassword] = useState("password123");
+  const [rememberMe, setRememberMe] = useState(false);
   const [localError, setLocalError] = useState("");
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLocalError("");
     try {
-      await login(email, password, "admin");
+      await login(email, password, "admin", rememberMe);
     } catch (err) {
       setLocalError(err instanceof Error ? err.message : "Login failed");
     }
@@ -83,6 +84,17 @@ export function AdminLoginScreen() {
               disabled={isLoading}
             />
           </div>
+
+          <label className="flex items-center gap-2 text-sm text-slate-700">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              disabled={isLoading}
+              className="h-4 w-4 rounded border-slate-300 text-slate-800 focus:ring-slate-500"
+            />
+            <span>Remember me for 1 week</span>
+          </label>
 
           <button
             type="submit"

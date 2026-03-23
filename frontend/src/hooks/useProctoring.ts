@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from "react";
+import { getAuthToken } from "../lib/authStorage";
 
 interface ProctoringState {
   isModelLoading: boolean;
@@ -252,7 +253,7 @@ export const useProctoring = (
 
   const sendQueuedFrame = useCallback(
     async (frame: QueuedFrame) => {
-      const token = localStorage.getItem("token");
+      const token = getAuthToken();
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };

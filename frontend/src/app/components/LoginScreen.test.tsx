@@ -44,7 +44,7 @@ describe('LoginScreen Component', () => {
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
-      expect(mockLogin).toHaveBeenCalledWith('student@example.com', 'password123', 'student');
+      expect(mockLogin).toHaveBeenCalledWith('student@example.com', 'password123', 'student', false);
     });
   });
 });

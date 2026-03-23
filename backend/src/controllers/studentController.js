@@ -91,9 +91,13 @@ export const startExam = async (req, res) => {
           pauseStartedAt: existingSubmission.pauseStartedAt || null,
           totalPausedMs: existingSubmission.totalPausedMs || 0,
           startedAt: existingSubmission.startedAt,
+          progressUpdatedAt: existingSubmission.updatedAt,
           autoSubmitted: existingSubmission.autoSubmitted || false,
           violationCount: existingSubmission.violationCount || 0,
           latestAction,
+          savedAnswers: existingSubmission.answers || [],
+          draftCurrentQuestion: existingSubmission.draftCurrentQuestion || 0,
+          draftMarkedQuestions: existingSubmission.draftMarkedQuestions || [],
           exam: {
             id: exam._id,
             title: exam.title,
@@ -126,9 +130,13 @@ export const startExam = async (req, res) => {
         pauseStartedAt: submission.pauseStartedAt || null,
         totalPausedMs: submission.totalPausedMs || 0,
         startedAt: submission.startedAt,
+        progressUpdatedAt: submission.updatedAt,
         autoSubmitted: submission.autoSubmitted || false,
         violationCount: submission.violationCount || 0,
         latestAction: null,
+        savedAnswers: [],
+        draftCurrentQuestion: 0,
+        draftMarkedQuestions: [],
         exam: {
           id: exam._id,
           title: exam.title,
@@ -191,6 +199,8 @@ export const submitExam = async (req, res) => {
 
     // Update submission
     submission.answers = gradedAnswers;
+    submission.draftCurrentQuestion = 0;
+    submission.draftMarkedQuestions = [];
     submission.correctAnswers = correctAnswers;
     submission.score = Math.round(score);
     submission.isPass = passed;
@@ -353,6 +363,82 @@ export const getExamSessionStatus = async (req, res) => {
   }
 };
 
+export const saveExamProgress = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const studentId = req.user?.id;
+    const {
+      answers = [],
+      currentQuestion = 0,
+      markedQuestions = [],
+    } = req.body || {};
+
+    if (!Array.isArray(answers)) {
+      return res.status(400).json({ message: "Answers must be an array" });
+    }
+
+    const submission = await Submission.findById(sessionId).select(
+      "studentId status controlState answers draftCurrentQuestion draftMarkedQuestions",
+    );
+
+    if (!submission) {
+      return res.status(404).json({ message: "Submission not found" });
+    }
+
+    if (submission.studentId.toString() !== studentId) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    const activeStatuses = new Set(["started", "in-progress"]);
+    if (!activeStatuses.has(submission.status)) {
+      return res.status(409).json({
+        message: "Cannot save progress for a completed session",
+      });
+    }
+
+    const normalizedAnswers = answers
+      .map((selectedAnswer, questionIndex) => {
+        if (typeof selectedAnswer !== "number") return null;
+        return { questionIndex, selectedAnswer };
+      })
+      .filter(Boolean);
+
+    submission.answers = normalizedAnswers;
+    submission.draftCurrentQuestion =
+      typeof currentQuestion === "number" && currentQuestion >= 0
+        ? Math.floor(currentQuestion)
+        : 0;
+    submission.draftMarkedQuestions = Array.isArray(markedQuestions)
+      ? markedQuestions
+          .filter((value) => typeof value === "number" && value >= 0)
+          .map((value) => Math.floor(value))
+      : [];
+
+    if (submission.status === "started" && normalizedAnswers.length > 0) {
+      submission.status = "in-progress";
+    }
+
+    await submission.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Progress saved",
+      data: {
+        sessionId: submission._id,
+        savedCount: normalizedAnswers.length,
+        status: submission.status,
+        draftCurrentQuestion: submission.draftCurrentQuestion || 0,
+        draftMarkedQuestions: submission.draftMarkedQuestions || [],
+        updatedAt: submission.updatedAt,
+      },
+    });
+  } catch (error) {
+    res
+      .status(500)
+      .json({ message: "Failed to save exam progress", error: error.message });
+  }
+};
+
 export const postExamHeartbeat = async (req, res) => {
   try {
     const { sessionId } = req.params;
@@ -483,4 +569,3 @@ export const logViolation = async (req, res) => {
       .json({ message: "Failed to log violation", error: error.message });
   }
 };
-

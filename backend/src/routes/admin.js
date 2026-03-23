@@ -3,6 +3,7 @@ import {
   getAdminDashboard,
   getActiveExamSessions,
   getAllUsers,
+  changeUserRole,
   deleteUser,
   suspendStudent,
   unsuspendStudent,
@@ -15,6 +16,7 @@ const router = express.Router();
 router.get("/dashboard", protectAdmin, requireAdminRole, getAdminDashboard);
 router.get("/active-exams", protectAdmin, requireAdminRole, getActiveExamSessions);
 router.get("/users", protectAdmin, requireAdminRole, getAllUsers);
+router.patch("/users/:userId/role", protectAdmin, requireAdminRole, changeUserRole);
 router.delete("/users/:userId", protectAdmin, requireAdminRole, deleteUser);
 router.post("/suspend/:studentId", protectAdmin, requireAdminRole, suspendStudent);
 router.post("/unsuspend/:studentId", protectAdmin, requireAdminRole, unsuspendStudent);

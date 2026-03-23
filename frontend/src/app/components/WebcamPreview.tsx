@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, CheckCircle } from "lucide-react";
+import { getBuiltInCameraStream } from "../../lib/mediaPolicy";
 
 const API_BASE =
   ((import.meta as any).env.VITE_API_BASE as string) ||
@@ -116,9 +117,10 @@ export function WebcamPreview({
   useEffect(() => {
     async function initWebcam() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: { ideal: 1280 }, height: { ideal: 720 } },
-          audio: false,
+        const stream = await getBuiltInCameraStream({
+          facingMode: "user",
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -171,7 +173,7 @@ export function WebcamPreview({
             <div className="font-semibold text-red-800">Webcam Error</div>
             <div className="text-sm text-red-700">{error}</div>
             <div className="text-xs text-red-600 mt-1">
-              Please allow camera permissions and try again.
+              Allow camera permission and use your built-in webcam.
             </div>
           </div>
         </div>

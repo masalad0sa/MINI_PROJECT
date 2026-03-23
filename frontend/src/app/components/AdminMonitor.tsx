@@ -35,10 +35,14 @@ export function AdminMonitor() {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string>("");
   const [realtimeEvents, setRealtimeEvents] = useState<any[]>([]);
+  const [eventFilter, setEventFilter] = useState<
+    "ALL" | "VIOLATION" | "JOINED" | "LEFT" | "ACTION"
+  >("ALL");
 
   // Socket.IO connection for real-time updates
   const { socket, isConnected } = useSocket({ namespace: "/monitor" });
   const prevExamIdRef = useRef<string>("");
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadExams = useCallback(
     async (showLoader = false) => {
@@ -91,6 +95,29 @@ export function AdminMonitor() {
     }
   }, [selectedExamId]);
 
+  const pushRealtimeEvent = useCallback((event: any) => {
+    setRealtimeEvents((prev) => [event, ...prev.slice(0, 49)]);
+  }, []);
+
+  const scheduleMonitorRefresh = useCallback(
+    (delayMs = 700) => {
+      if (refreshDebounceRef.current) return;
+      refreshDebounceRef.current = setTimeout(() => {
+        refreshDebounceRef.current = null;
+        loadMonitorData();
+      }, delayMs);
+    },
+    [loadMonitorData],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (refreshDebounceRef.current) {
+        clearTimeout(refreshDebounceRef.current);
+      }
+    };
+  }, []);
+
   // Join/leave socket rooms when exam selection changes
   useEffect(() => {
     if (!socket || !isConnected) return;
@@ -107,45 +134,53 @@ export function AdminMonitor() {
     }
   }, [socket, isConnected, selectedExamId]);
 
+  useEffect(() => {
+    setRealtimeEvents([]);
+    setEventFilter("ALL");
+  }, [selectedExamId]);
+
   // Listen for real-time socket events
   useEffect(() => {
     if (!socket) return;
 
     const handleViolation = (data: any) => {
       console.log("[socket] violation:new", data);
-      setRealtimeEvents((prev) => [
-        { type: "violation", ...data, receivedAt: Date.now() },
-        ...prev.slice(0, 49), // Keep last 50
-      ]);
-      // Refresh full data to get updated states
-      loadMonitorData();
+      pushRealtimeEvent({
+        eventKind: "VIOLATION",
+        ...data,
+        receivedAt: Date.now(),
+      });
+      scheduleMonitorRefresh();
     };
 
     const handleStudentJoined = (data: any) => {
       console.log("[socket] student:joined", data);
-      setRealtimeEvents((prev) => [
-        { type: "joined", ...data, receivedAt: Date.now() },
-        ...prev.slice(0, 49),
-      ]);
-      loadMonitorData();
+      pushRealtimeEvent({
+        eventKind: "JOINED",
+        ...data,
+        receivedAt: Date.now(),
+      });
+      scheduleMonitorRefresh();
     };
 
     const handleStudentLeft = (data: any) => {
       console.log("[socket] student:left", data);
-      setRealtimeEvents((prev) => [
-        { type: "left", ...data, receivedAt: Date.now() },
-        ...prev.slice(0, 49),
-      ]);
-      loadMonitorData();
+      pushRealtimeEvent({
+        eventKind: "LEFT",
+        ...data,
+        receivedAt: Date.now(),
+      });
+      scheduleMonitorRefresh();
     };
 
     const handleExaminerAction = (data: any) => {
       console.log("[socket] examiner:action", data);
-      setRealtimeEvents((prev) => [
-        { type: "action", ...data, receivedAt: Date.now() },
-        ...prev.slice(0, 49),
-      ]);
-      loadMonitorData();
+      pushRealtimeEvent({
+        eventKind: "ACTION",
+        ...data,
+        receivedAt: Date.now(),
+      });
+      scheduleMonitorRefresh();
     };
 
     socket.on("violation:new", handleViolation);
@@ -159,14 +194,15 @@ export function AdminMonitor() {
       socket.off("student:left", handleStudentLeft);
       socket.off("examiner:action", handleExaminerAction);
     };
-  }, [socket, loadMonitorData]);
+  }, [socket, pushRealtimeEvent, scheduleMonitorRefresh]);
 
   useEffect(() => {
     loadMonitorData();
-    // Slower fallback poll since we have real-time updates now
-    const interval = setInterval(loadMonitorData, 30000);
+    // Poll less aggressively when socket is healthy; faster fallback otherwise.
+    const fallbackPollMs = isConnected ? 60000 : 15000;
+    const interval = setInterval(loadMonitorData, fallbackPollMs);
     return () => clearInterval(interval);
-  }, [loadMonitorData]);
+  }, [loadMonitorData, isConnected]);
 
   const students = (monitorData?.students || []).filter((student: any) =>
     ["started", "in-progress"].includes((student.status || "").toLowerCase()),
@@ -228,6 +264,41 @@ export function AdminMonitor() {
   };
 
   const toReadableLabel = (value: string) => value?.replace(/_/g, " ") || "";
+
+  const filteredRealtimeEvents = useMemo(() => {
+    if (eventFilter === "ALL") return realtimeEvents;
+    return realtimeEvents.filter((event) => event.eventKind === eventFilter);
+  }, [eventFilter, realtimeEvents]);
+
+  const getEventBadgeStyle = (eventKind: string) => {
+    switch (eventKind) {
+      case "VIOLATION":
+        return "bg-red-100 text-red-700 border-red-200";
+      case "JOINED":
+        return "bg-green-100 text-green-700 border-green-200";
+      case "LEFT":
+        return "bg-slate-100 text-slate-700 border-slate-200";
+      case "ACTION":
+        return "bg-indigo-100 text-indigo-700 border-indigo-200";
+      default:
+        return "bg-slate-100 text-slate-700 border-slate-200";
+    }
+  };
+
+  const getRealtimeEventDescription = (event: any) => {
+    switch (event.eventKind) {
+      case "VIOLATION":
+        return `${event.studentName || "Student"} - ${toReadableLabel(event.type)} (${event.severity || "MEDIUM"})`;
+      case "JOINED":
+        return `${event.studentName || "Student"} joined the exam`;
+      case "LEFT":
+        return `${event.studentName || "Student"} left the exam${event.status ? ` (${event.status})` : ""}`;
+      case "ACTION":
+        return `${event.actorName || "Examiner"} applied ${toReadableLabel(event.actionType || "ACTION")}`;
+      default:
+        return "Realtime event received";
+    }
+  };
 
   const performAction = async (
     actionType:
@@ -295,6 +366,9 @@ export function AdminMonitor() {
             className="bg-white/20 border border-white/30 text-white rounded-lg px-3 py-1.5 text-sm [&>option]:text-slate-800"
           >
             <option value="">Select Exam</option>
+            <option value="all">
+              {user?.role === "examiner" ? "All My Exams" : "All Exams"}
+            </option>
             {exams.map((exam: any) => (
               <option key={exam._id} value={exam._id}>
                 {exam.title}
@@ -309,6 +383,20 @@ export function AdminMonitor() {
             <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
             Refresh
           </button>
+          <div
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border ${
+              isConnected
+                ? "bg-emerald-500/20 border-emerald-300/40 text-emerald-50"
+                : "bg-red-500/20 border-red-300/40 text-red-50"
+            }`}
+          >
+            {isConnected ? (
+              <Wifi className="w-3.5 h-3.5" />
+            ) : (
+              <WifiOff className="w-3.5 h-3.5" />
+            )}
+            {isConnected ? "Live socket connected" : "Realtime reconnecting"}
+          </div>
           {summary.total > 0 && (
             <div className="flex items-center gap-3 text-sm">
               <span className="bg-green-500/30 px-2 py-1 rounded">{summary.active} active</span>
@@ -389,6 +477,11 @@ export function AdminMonitor() {
                         {(student.onlineStatus || "OFFLINE").toUpperCase()}
                       </span>
                     </div>
+                    {selectedExamId === "all" && (
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        Exam: {student.examTitle || "Unknown Exam"}
+                      </div>
+                    )}
                     <div className="flex items-center justify-between text-[11px] text-slate-500 mt-2">
                       <span>
                         {student.lastAlertAt
@@ -408,6 +501,64 @@ export function AdminMonitor() {
 
           {/* Right Panel */}
           <div className="flex-1 p-6 overflow-y-auto bg-slate-50">
+            <div className="bg-white rounded-xl shadow-md border border-slate-200 p-6 mb-6">
+              <div className="flex items-center justify-between gap-3 mb-4">
+                <h3 className="text-lg font-semibold text-slate-800">
+                  Realtime Event Feed
+                </h3>
+                <div className="text-xs text-slate-500">
+                  {filteredRealtimeEvents.length} shown / {realtimeEvents.length} total
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mb-3">
+                {(["ALL", "VIOLATION", "JOINED", "LEFT", "ACTION"] as const).map(
+                  (filterValue) => (
+                    <button
+                      key={filterValue}
+                      onClick={() => setEventFilter(filterValue)}
+                      className={`text-xs px-2 py-1 rounded-full border transition-colors ${
+                        eventFilter === filterValue
+                          ? "bg-indigo-100 text-indigo-700 border-indigo-300"
+                          : "bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200"
+                      }`}
+                    >
+                      {filterValue}
+                    </button>
+                  ),
+                )}
+              </div>
+              <div className="space-y-2 max-h-[240px] overflow-y-auto">
+                {filteredRealtimeEvents.length === 0 ? (
+                  <p className="text-slate-400 text-sm">
+                    Waiting for realtime events...
+                  </p>
+                ) : (
+                  filteredRealtimeEvents.map((event: any, idx: number) => (
+                    <div
+                      key={`${event.receivedAt || idx}-${idx}`}
+                      className="flex items-start justify-between gap-3 p-3 rounded-lg border border-slate-200 bg-slate-50"
+                    >
+                      <div>
+                        <span
+                          className={`inline-flex text-[11px] px-2 py-0.5 rounded-full border font-medium ${getEventBadgeStyle(event.eventKind)}`}
+                        >
+                          {event.eventKind}
+                        </span>
+                        <div className="text-sm text-slate-700 mt-1">
+                          {getRealtimeEventDescription(event)}
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-400 font-mono">
+                        {event.receivedAt
+                          ? new Date(event.receivedAt).toLocaleTimeString()
+                          : ""}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
             {selected ? (
               <>
                 {/* Student Details */}
@@ -434,6 +585,12 @@ export function AdminMonitor() {
                       <div className="text-xs text-slate-500">User ID</div>
                       <div className="font-semibold text-slate-800">@{selected.studentUserId}</div>
                     </div>
+                    {selectedExamId === "all" && (
+                      <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
+                        <div className="text-xs text-slate-500">Exam</div>
+                        <div className="font-semibold text-slate-800">{selected.examTitle || "Unknown Exam"}</div>
+                      </div>
+                    )}
                     <div className="bg-slate-50 rounded-lg p-3 border border-slate-200">
                       <div className="text-xs text-slate-500">Progress</div>
                       <div className="font-semibold text-slate-800">{selected.progress}% Complete</div>
@@ -611,7 +768,9 @@ export function AdminMonitor() {
                 <h3 className="text-lg font-semibold text-slate-800">All Violation Logs</h3>
                 <div className="flex items-center gap-2 text-sm text-slate-500">
                   <Clock className="w-4 h-4" />
-                  <span>Auto-refresh: 10s</span>
+                  <span>
+                    Fallback refresh: {isConnected ? "60s (socket live)" : "15s"}
+                  </span>
                 </div>
               </div>
               <div className="space-y-2 max-h-[300px] overflow-y-auto">

@@ -61,19 +61,43 @@ const ensureExamAccess = async (examId, user) => {
 export const monitorExam = async (req, res) => {
   try {
     const { examId } = req.params;
-    const access = await ensureExamAccess(examId, req.user);
-    if (!access.allowed) {
-      const statusCode = access.reason === "Exam not found" ? 404 : 403;
-      return res.status(statusCode).json({ message: access.reason });
+    const isAllExams = examId === "all";
+    let exam = null;
+    let examFilter = null;
+
+    if (isAllExams) {
+      const accessibleExams = await Exam.find(
+        req.user.role === "admin" ? {} : { createdBy: req.user.id },
+      ).select("_id title duration scheduledStart scheduledEnd");
+
+      const examIds = accessibleExams.map((entry) => entry._id);
+      examFilter = { $in: examIds };
+      exam = {
+        _id: "all",
+        title: req.user.role === "admin" ? "All Exams" : "All My Exams",
+        duration: null,
+        scheduledStart: null,
+        scheduledEnd: null,
+        examCount: examIds.length,
+      };
+    } else {
+      const access = await ensureExamAccess(examId, req.user);
+      if (!access.allowed) {
+        const statusCode = access.reason === "Exam not found" ? 404 : 403;
+        return res.status(statusCode).json({ message: access.reason });
+      }
+      exam = access.exam;
+      examFilter = examId;
     }
-    const exam = access.exam;
+
     const activeStatuses = ["started", "in-progress"];
 
     const submissions = await Submission.find({
-      examId,
+      examId: examFilter,
       status: { $in: activeStatuses },
     })
       .populate("studentId", "name email userId")
+      .populate("examId", "title")
       .sort({ startedAt: -1 });
 
     const students = submissions.map((sub) => {
@@ -86,6 +110,8 @@ export const monitorExam = async (req, res) => {
         studentName: sub.studentId?.name || "Unknown",
         studentEmail: sub.studentId?.email || "",
         studentUserId: sub.studentId?.userId || "",
+        examId: sub.examId?._id || sub.examId,
+        examTitle: sub.examId?.title || exam?.title || "",
         status: sub.status,
         controlState: sub.controlState || "ACTIVE",
         progress: sub.totalQuestions
@@ -121,6 +147,7 @@ export const monitorExam = async (req, res) => {
         allViolations.push({
           studentName: sub.studentId?.name || "Unknown",
           studentUserId: sub.studentId?.userId || "",
+          examTitle: sub.examId?.title || "",
           type: violation.type,
           severity: violation.severity,
           description: violation.description,
@@ -140,6 +167,8 @@ export const monitorExam = async (req, res) => {
           duration: exam.duration,
           scheduledStart: exam.scheduledStart,
           scheduledEnd: exam.scheduledEnd,
+          scope: isAllExams ? "ALL" : "SINGLE",
+          examCount: exam.examCount || 1,
         },
         students,
         riskQueue: students.map((student, idx) => ({
@@ -147,6 +176,7 @@ export const monitorExam = async (req, res) => {
           submissionId: student.submissionId,
           studentName: student.studentName,
           studentUserId: student.studentUserId,
+          examTitle: student.examTitle,
           riskScore: student.riskScore,
           riskLevel: student.riskLevel,
           warningCount: student.warningCount,
@@ -179,15 +209,39 @@ export const monitorExam = async (req, res) => {
 export const getIntegrityReport = async (req, res) => {
   try {
     const { examId } = req.params;
-    const access = await ensureExamAccess(examId, req.user);
-    if (!access.allowed) {
-      const statusCode = access.reason === "Exam not found" ? 404 : 403;
-      return res.status(statusCode).json({ message: access.reason });
-    }
-    const exam = access.exam;
+    const isAllExams = examId === "all";
+    let exam = null;
+    let examFilter = null;
 
-    const submissions = await Submission.find({ examId })
+    if (isAllExams) {
+      const accessibleExams = await Exam.find(
+        req.user.role === "admin" ? {} : { createdBy: req.user.id },
+      ).select("_id title duration scheduledStart scheduledEnd passingScore");
+
+      const examIds = accessibleExams.map((entry) => entry._id);
+      examFilter = { $in: examIds };
+      exam = {
+        _id: "all",
+        title: req.user.role === "admin" ? "All Exams" : "All My Exams",
+        duration: null,
+        scheduledStart: null,
+        scheduledEnd: null,
+        passingScore: null,
+        examCount: examIds.length,
+      };
+    } else {
+      const access = await ensureExamAccess(examId, req.user);
+      if (!access.allowed) {
+        const statusCode = access.reason === "Exam not found" ? 404 : 403;
+        return res.status(statusCode).json({ message: access.reason });
+      }
+      exam = access.exam;
+      examFilter = examId;
+    }
+
+    const submissions = await Submission.find({ examId: examFilter })
       .populate("studentId", "name email userId")
+      .populate("examId", "title duration scheduledStart scheduledEnd passingScore")
       .sort({ submittedAt: -1 });
 
     const reports = submissions.map((sub) => {
@@ -210,6 +264,8 @@ export const getIntegrityReport = async (req, res) => {
         studentName: sub.studentId?.name || "Unknown",
         studentEmail: sub.studentId?.email || "",
         studentUserId: sub.studentId?.userId || "",
+        examId: sub.examId?._id || sub.examId,
+        examTitle: sub.examId?.title || exam?.title || "",
         score: sub.score,
         totalQuestions: sub.totalQuestions,
         correctAnswers: sub.correctAnswers,
@@ -236,6 +292,8 @@ export const getIntegrityReport = async (req, res) => {
           scheduledStart: exam.scheduledStart,
           scheduledEnd: exam.scheduledEnd,
           passingScore: exam.passingScore,
+          scope: isAllExams ? "ALL" : "SINGLE",
+          examCount: exam.examCount || 1,
         },
         reports,
         summary: {

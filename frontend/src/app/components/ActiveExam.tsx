@@ -18,6 +18,7 @@ import {
 } from "../../hooks/useBrowserSecurity";
 import { useProctoring, ViolationEvent } from "../../hooks/useProctoring";
 import { WarningModal } from "./WarningModal";
+import { getBuiltInCameraStream } from "../../lib/mediaPolicy";
 
 const MAX_VIOLATIONS_BEFORE_AUTOSUBMIT = 3;
 const SUSPICION_MEDIUM_THRESHOLD = 45;
@@ -54,6 +55,43 @@ const SHOW_PROCTOR_DEBUG =
     .toLowerCase()
     .trim() === "true";
 
+const EXAM_DRAFT_PREFIX = "smartproctor_exam_draft:";
+
+interface LocalExamDraft {
+  sessionId: string;
+  answers: Array<number | null>;
+  markedQuestions: number[];
+  currentQuestion: number;
+  savedAt: number;
+}
+
+const getExamDraftKey = (examId?: string) => `${EXAM_DRAFT_PREFIX}${examId || "unknown"}`;
+
+const readExamDraft = (examId?: string): LocalExamDraft | null => {
+  if (!examId) return null;
+  try {
+    const raw = localStorage.getItem(getExamDraftKey(examId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as LocalExamDraft;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (!Array.isArray(parsed.answers) || !Array.isArray(parsed.markedQuestions)) {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const clearExamDraft = (examId?: string) => {
+  if (!examId) return;
+  try {
+    localStorage.removeItem(getExamDraftKey(examId));
+  } catch {
+    // Ignore localStorage failures
+  }
+};
+
 export function ActiveExam() {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
@@ -72,12 +110,15 @@ export function ActiveExam() {
   const [timeLeft, setTimeLeft] = useState(0);
   const [pageError, setPageError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [lastProgressSyncAt, setLastProgressSyncAt] = useState<number | null>(null);
+  const [progressSyncError, setProgressSyncError] = useState<string | null>(null);
 
   // Webcam refs
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [webcamError, setWebcamError] = useState<string | null>(null);
   const hasAutoSubmitted = useRef(false);
+  const progressDirtyRef = useRef(false);
 
   // Security violation state
   const [violationCount, setViolationCount] = useState(0);
@@ -123,16 +164,21 @@ export function ActiveExam() {
   useEffect(() => {
     async function startWebcam() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "user", width: 320, height: 240 },
-          audio: false,
+        const stream = await getBuiltInCameraStream({
+          facingMode: "user",
+          width: 320,
+          height: 240,
         });
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
       } catch (err) {
-        setWebcamError("Camera access denied or unavailable");
+        const message =
+          err instanceof Error && err.message
+            ? err.message
+            : "Camera access denied or unavailable";
+        setWebcamError(message);
       }
     }
     startWebcam();
@@ -178,6 +224,9 @@ export function ActiveExam() {
         setSubmitError(null);
         setResults(res.data);
         setShowResults(true);
+        setProgressSyncError(null);
+        progressDirtyRef.current = false;
+        clearExamDraft(examId);
 
         // Stop webcam
         if (streamRef.current) {
@@ -199,7 +248,7 @@ export function ActiveExam() {
     } finally {
       setSubmitting(false);
     }
-  }, [answers, sessionId, submitting, showResults]);
+  }, [answers, sessionId, submitting, showResults, examId]);
 
   // Debounce by violation type to prevent repeated spam events.
   const lastViolationByType = useRef<Record<string, number>>({});
@@ -368,7 +417,68 @@ export function ActiveExam() {
           setSessionId(startRes.data.sessionId);
           setExam(startRes.data.exam);
           const qCount = startRes.data.exam.questions?.length || 0;
-          setAnswers(new Array(qCount).fill(null));
+
+          const baseAnswers: Array<number | null> = new Array(qCount).fill(null);
+          const serverSavedAnswers = Array.isArray(startRes.data.savedAnswers)
+            ? startRes.data.savedAnswers
+            : [];
+
+          serverSavedAnswers.forEach((savedAnswer: any) => {
+            const questionIndex = Number(savedAnswer?.questionIndex);
+            const selectedAnswer = Number(savedAnswer?.selectedAnswer);
+            if (
+              Number.isInteger(questionIndex) &&
+              questionIndex >= 0 &&
+              questionIndex < qCount &&
+              Number.isInteger(selectedAnswer) &&
+              selectedAnswer >= 0
+            ) {
+              baseAnswers[questionIndex] = selectedAnswer;
+            }
+          });
+
+          const serverDraftQuestion = Number(startRes.data.draftCurrentQuestion);
+          const safeServerQuestion =
+            Number.isInteger(serverDraftQuestion) && serverDraftQuestion >= 0
+              ? Math.min(serverDraftQuestion, Math.max(0, qCount - 1))
+              : 0;
+          const serverDraftMarked = Array.isArray(startRes.data.draftMarkedQuestions)
+            ? startRes.data.draftMarkedQuestions
+                .filter((value: any) => Number.isInteger(value) && value >= 0 && value < qCount)
+                .map((value: number) => Number(value))
+            : [];
+
+          let resolvedAnswers = baseAnswers;
+          let resolvedQuestion = safeServerQuestion;
+          let resolvedMarked = serverDraftMarked;
+
+          const localDraft = readExamDraft(examId);
+          if (localDraft && localDraft.sessionId === startRes.data.sessionId) {
+            const localAnswersValid = Array.isArray(localDraft.answers) && localDraft.answers.length === qCount;
+            if (localAnswersValid) {
+              resolvedAnswers = localDraft.answers.map((answer) =>
+                typeof answer === "number" && answer >= 0 ? answer : null,
+              );
+              resolvedQuestion =
+                Number.isInteger(localDraft.currentQuestion) && localDraft.currentQuestion >= 0
+                  ? Math.min(localDraft.currentQuestion, Math.max(0, qCount - 1))
+                  : 0;
+              resolvedMarked = Array.isArray(localDraft.markedQuestions)
+                ? localDraft.markedQuestions
+                    .filter((value) => Number.isInteger(value) && value >= 0 && value < qCount)
+                    .map((value) => Number(value))
+                : [];
+              setExaminerNotice("Recovered your in-progress answers from local backup.");
+            }
+          }
+
+          setAnswers(resolvedAnswers);
+          setCurrentQuestion(resolvedQuestion);
+          setMarkedQuestions(new Set(resolvedMarked));
+          setLastProgressSyncAt(null);
+          setProgressSyncError(null);
+          progressDirtyRef.current = false;
+
           const initialControlState = (startRes.data.controlState ||
             "ACTIVE") as "ACTIVE" | "PAUSED" | "TERMINATED";
           setSessionControlState(initialControlState);
@@ -618,6 +728,82 @@ export function ActiveExam() {
     }
     setMarkedQuestions(newMarked);
   };
+
+  useEffect(() => {
+    if (!examId || !sessionId || loading || showResults) return;
+
+    const draft: LocalExamDraft = {
+      sessionId,
+      answers,
+      markedQuestions: Array.from(markedQuestions),
+      currentQuestion,
+      savedAt: Date.now(),
+    };
+
+    try {
+      localStorage.setItem(getExamDraftKey(examId), JSON.stringify(draft));
+    } catch {
+      // Ignore localStorage write failures (private mode, quota, etc.)
+    }
+
+    progressDirtyRef.current = true;
+  }, [
+    answers,
+    currentQuestion,
+    markedQuestions,
+    examId,
+    sessionId,
+    loading,
+    showResults,
+  ]);
+
+  useEffect(() => {
+    if (!sessionId || loading || showResults) return;
+
+    let cancelled = false;
+
+    const syncProgress = async () => {
+      if (!progressDirtyRef.current || cancelled) return;
+      progressDirtyRef.current = false;
+
+      try {
+        const res = await api.saveStudentExamProgress(
+          sessionId,
+          answers,
+          currentQuestion,
+          Array.from(markedQuestions),
+        );
+
+        if (!cancelled && res?.success) {
+          setLastProgressSyncAt(Date.now());
+          setProgressSyncError(null);
+          return;
+        }
+
+        progressDirtyRef.current = true;
+      } catch (err) {
+        progressDirtyRef.current = true;
+        if (!cancelled) {
+          setProgressSyncError("Progress sync delayed. Retrying...");
+        }
+      }
+    };
+
+    syncProgress();
+    const interval = setInterval(syncProgress, 8000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [
+    sessionId,
+    answers,
+    currentQuestion,
+    markedQuestions,
+    loading,
+    showResults,
+  ]);
 
   const canGoNext = currentQuestion < (exam?.questions?.length || 0) - 1;
   const canGoPrev = currentQuestion > 0;
@@ -909,6 +1095,21 @@ export function ActiveExam() {
             <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
             <span className="text-sm font-medium text-green-700">
               {attemptedCount}/{questionCount} Answered
+            </span>
+          </div>
+          <div
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-xs ${
+              progressSyncError
+                ? "bg-amber-50 border-amber-200 text-amber-700"
+                : "bg-slate-100 border-slate-200 text-slate-600"
+            }`}
+          >
+            <span className="font-medium">
+              {progressSyncError
+                ? progressSyncError
+                : lastProgressSyncAt
+                  ? `Saved ${new Date(lastProgressSyncAt).toLocaleTimeString()}`
+                  : "Saving draft..."}
             </span>
           </div>
           {violationCount > 0 && (

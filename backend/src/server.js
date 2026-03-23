@@ -61,6 +61,14 @@ app.options("*", cors(corsOptions));
 
 // Security middleware
 app.use(helmet());
+app.use((req, res, next) => {
+  // Defense-in-depth: block browser screen-capture APIs at policy level.
+  res.setHeader(
+    "Permissions-Policy",
+    "display-capture=(), camera=(self), microphone=(self)",
+  );
+  next();
+});
 
 // Rate limiters
 const globalLimiter = rateLimit({

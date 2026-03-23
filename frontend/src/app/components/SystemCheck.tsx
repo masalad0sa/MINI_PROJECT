@@ -11,6 +11,7 @@ import {
   AlertCircle,
   RefreshCw,
 } from "lucide-react";
+import { getBuiltInCameraStream } from "../../lib/mediaPolicy";
 
 const API_BASE =
   ((import.meta as any).env.VITE_API_BASE as string) ||
@@ -49,7 +50,7 @@ export function SystemCheck() {
     {
       id: "webcam",
       label: "Webcam Access",
-      description: "Camera permission required",
+      description: "Built-in camera permission required",
       status: "pending",
       icon: Camera,
     },
@@ -157,8 +158,10 @@ export function SystemCheck() {
     // Check 3: Webcam access
     updateCheck("webcam", "checking");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: 640, height: 480 },
+      const stream = await getBuiltInCameraStream({
+        facingMode: "user",
+        width: 640,
+        height: 480,
       });
       streamRef.current = stream;
       if (videoRef.current) {
